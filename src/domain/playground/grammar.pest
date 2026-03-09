@@ -1,0 +1,57 @@
+// grammar.pest - PEG grammar for playground expressions
+// CashCraft Playground Expression Parser
+
+WHITESPACE = _{ " " | "\t" }
+
+// Numbers - integers and decimals with optional negative sign
+number = @{ 
+    "-"? ~ ("0" | ASCII_NONZERO_DIGIT ~ ASCII_DIGIT*) ~ ("." ~ ASCII_DIGIT+)?
+}
+
+// Identifiers - variable and function names
+identifier = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
+
+// Global variable reference (prefixed with $)
+// Examples: $salary, $rent, $income, $expenses
+global_var = @{ "$" ~ identifier }
+
+// Local variable reference (no prefix)
+// Examples: x, myvar, tax_rate
+local_var = @{ identifier }
+
+// Function call
+// Examples: round(x), min(a, b), avg(1, 2, 3)
+function_name = @{ ASCII_ALPHA ~ ASCII_ALPHANUMERIC* }
+function_call = { function_name ~ "(" ~ (expr ~ ("," ~ expr)*)? ~ ")" }
+
+// Atoms - the building blocks of expressions
+atom = { 
+    number 
+    | function_call 
+    | global_var 
+    | local_var 
+    | "(" ~ expr ~ ")" 
+}
+
+// Operators (precedence from low to high)
+// Level 1: Addition and Subtraction (lowest)
+add_op = { "+" | "-" }
+// Level 2: Multiplication, Division, Modulo
+mul_op = { "*" | "/" | "%" }
+// Level 3: Power/Exponentiation (highest)
+pow_op = { "^" }
+
+// Expressions with precedence climbing
+// Power has highest precedence (right-associative in math, but we parse left-to-right)
+power = { atom ~ (pow_op ~ atom)* }
+// Term handles multiplication/division
+term = { power ~ (mul_op ~ power)* }
+// Expression handles addition/subtraction (lowest precedence)
+expr = { term ~ (add_op ~ term)* }
+
+// Assignment - assigns expression result to a local variable
+// Example: x = 100, tax = $salary * 0.22
+assignment = { identifier ~ "=" ~ expr }
+
+// Line - either an assignment or a standalone expression
+line = { SOI ~ (assignment | expr) ~ EOI }
