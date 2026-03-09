@@ -5,11 +5,16 @@
 //! - TextInput: Text input with cursor and modes
 //! - ProgressBar: Budget utilization bars
 //! - Charts: Bar, line, sparkline, pie charts
+//! - Autocomplete: Dropdown suggestions for inputs
 
+pub mod autocomplete;
 pub mod chart;
 pub mod input;
 pub mod progress;
 pub mod table;
+
+// Autocomplete widgets
+pub use autocomplete::{Autocomplete, AutocompleteState};
 
 // Table widgets
 pub use table::{Alignment, ColumnWidth, SimpleTable, TableColumn, TableRow, TableState, VimTable};

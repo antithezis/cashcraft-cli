@@ -1,0 +1,120 @@
+# =============================================================================
+# Rust / Cargo
+# =============================================================================
+
+# Build artifacts
+/target/
+debug/
+release/
+
+# Note: Cargo.lock is COMMITTED for binary applications (reproducible builds)
+# Only ignore for libraries: Cargo.lock
+
+# =============================================================================
+# IDE / Editor
+# =============================================================================
+
+# JetBrains (IntelliJ, CLion, RustRover)
+.idea/
+*.iml
+
+# VS Code
+.vscode/
+
+# Vim / Neovim
+*.swp
+*.swo
+*.swn
+*~
+.netrwhist
+Session.vim
+.nvimlog
+
+# Emacs
+*~
+\#*\#
+.#*
+
+# Sublime Text
+*.sublime-workspace
+*.sublime-project
+
+# =============================================================================
+# Operating System
+# =============================================================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+.directory
+.Trash-*
+
+# =============================================================================
+# Project-specific
+# =============================================================================
+
+# SQLite database files (user data)
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+
+# Log files
+*.log
+logs/
+
+# Backup files
+*.bak
+*.backup
+*.orig
+
+# Environment files (may contain secrets)
+.env
+.env.*
+!.env.example
+
+# Coverage reports
+coverage/
+*.profraw
+*.profdata
+lcov.info
+tarpaulin-report.html
+
+# Benchmark results
+criterion/
+
+# Documentation build
+/doc/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# =============================================================================
+# Rust-specific tooling
+# =============================================================================
+
+# Rustfmt backup
+*.rs.bk
+
+# Cargo registry (should use system cache)
+.cargo/
+
+# Generated grammar files (pest)
+# Note: Keep committed if checked into source control
+# *.pest.rs

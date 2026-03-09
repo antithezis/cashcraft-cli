@@ -1,10 +1,21 @@
 //! Budget repository
 //!
 //! Provides CRUD operations for Budget entities using SQLite.
+//!
+//! ## Template System
+//!
+//! Budgets can be either templates (`is_template = true`) that apply to all months,
+//! or overrides (`is_template = false`) that apply to a specific month/year.
+//!
+//! Key methods:
+//! - `get_templates()` - Get all budget templates
+//! - `get_effective_budgets()` - Get effective budgets for a month (templates + overrides)
+//! - `get_by_month()` - Get only the explicit overrides for a month
 
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Row};
 use rust_decimal::Decimal;
+use std::collections::HashMap;
 use std::str::FromStr;
 use uuid::Uuid;
 
@@ -23,19 +34,19 @@ impl<'a> BudgetRepository<'a> {
         Self { db }
     }
 
-    /// Get all budgets for a specific month.
+    /// Get all budgets for a specific month (overrides only, not templates).
     ///
     /// # Arguments
     /// * `year` - The year
     /// * `month` - The month (1-12)
     ///
     /// # Returns
-    /// * `Result<Vec<Budget>>` - All budgets for the specified month
+    /// * `Result<Vec<Budget>>` - All budget overrides for the specified month
     pub fn get_by_month(&self, year: i32, month: u32) -> Result<Vec<Budget>> {
         let mut stmt = self.db.conn.prepare(
-            "SELECT id, month, year, category, amount, spent, created_at, updated_at
+            "SELECT id, month, year, category, amount, spent, is_template, created_at, updated_at
              FROM budgets 
-             WHERE year = ?1 AND month = ?2
+             WHERE year = ?1 AND month = ?2 AND is_template = 0
              ORDER BY category",
         )?;
 
@@ -57,7 +68,89 @@ impl<'a> BudgetRepository<'a> {
         Ok(budgets)
     }
 
-    /// Get a budget for a specific month and category.
+    /// Get all budget templates.
+    ///
+    /// Templates have `is_template = true` and apply to all months by default.
+    ///
+    /// # Returns
+    /// * `Result<Vec<Budget>>` - All budget templates
+    pub fn get_templates(&self) -> Result<Vec<Budget>> {
+        let mut stmt = self.db.conn.prepare(
+            "SELECT id, month, year, category, amount, spent, is_template, created_at, updated_at
+             FROM budgets 
+             WHERE is_template = 1
+             ORDER BY category",
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            Self::row_to_budget(row).map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
+            })
+        })?;
+
+        let mut budgets = Vec::new();
+        for row in rows {
+            budgets.push(row?);
+        }
+
+        Ok(budgets)
+    }
+
+    /// Get effective budgets for a month (templates + overrides merged).
+    ///
+    /// For each category:
+    /// - If a month-specific override exists, use it
+    /// - Otherwise, use the template (if any)
+    ///
+    /// # Arguments
+    /// * `year` - The year
+    /// * `month` - The month (1-12)
+    ///
+    /// # Returns
+    /// * `Result<Vec<Budget>>` - Effective budgets for the month
+    pub fn get_effective_budgets(&self, year: i32, month: u32) -> Result<Vec<Budget>> {
+        let templates = self.get_templates()?;
+        let overrides = self.get_by_month(year, month)?;
+
+        // Build a map of category -> override
+        let override_map: HashMap<String, Budget> = overrides
+            .into_iter()
+            .map(|b| (b.category.clone(), b))
+            .collect();
+
+        let mut effective = Vec::new();
+
+        // Add all templates, but use override if one exists
+        for template in templates {
+            if let Some(override_budget) = override_map.get(&template.category) {
+                effective.push(override_budget.clone());
+            } else {
+                // Create a virtual budget from template for this month
+                let mut virtual_budget = template.override_for_month(month, year);
+                virtual_budget.id = template.id; // Keep template ID for reference
+                virtual_budget.is_template = true; // Mark as coming from template
+                effective.push(virtual_budget);
+            }
+        }
+
+        // Add any overrides for categories not in templates
+        for (category, override_budget) in override_map {
+            if !effective.iter().any(|b| b.category == category) {
+                effective.push(override_budget);
+            }
+        }
+
+        // Sort by category
+        effective.sort_by(|a, b| a.category.cmp(&b.category));
+
+        Ok(effective)
+    }
+
+    /// Get a budget for a specific month and category (override only).
     ///
     /// # Arguments
     /// * `year` - The year
@@ -73,12 +166,35 @@ impl<'a> BudgetRepository<'a> {
         category: &str,
     ) -> Result<Option<Budget>> {
         let mut stmt = self.db.conn.prepare(
-            "SELECT id, month, year, category, amount, spent, created_at, updated_at
+            "SELECT id, month, year, category, amount, spent, is_template, created_at, updated_at
              FROM budgets 
-             WHERE year = ?1 AND month = ?2 AND category = ?3",
+             WHERE year = ?1 AND month = ?2 AND category = ?3 AND is_template = 0",
         )?;
 
         let mut rows = stmt.query(params![year, month as i32, category])?;
+
+        if let Some(row) = rows.next()? {
+            Ok(Some(Self::row_to_budget(row)?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Get a template for a specific category.
+    ///
+    /// # Arguments
+    /// * `category` - The category
+    ///
+    /// # Returns
+    /// * `Result<Option<Budget>>` - The template if found
+    pub fn get_template_by_category(&self, category: &str) -> Result<Option<Budget>> {
+        let mut stmt = self.db.conn.prepare(
+            "SELECT id, month, year, category, amount, spent, is_template, created_at, updated_at
+             FROM budgets 
+             WHERE category = ?1 AND is_template = 1",
+        )?;
+
+        let mut rows = stmt.query(params![category])?;
 
         if let Some(row) = rows.next()? {
             Ok(Some(Self::row_to_budget(row)?))
@@ -118,7 +234,7 @@ impl<'a> BudgetRepository<'a> {
 
     /// Upsert a budget (insert or update).
     ///
-    /// If a budget exists for the given month/year/category, updates it.
+    /// If a budget exists for the given month/year/category/is_template, updates it.
     /// Otherwise, creates a new budget.
     ///
     /// # Arguments
@@ -128,11 +244,12 @@ impl<'a> BudgetRepository<'a> {
     /// * `Result<()>` - Success or error
     pub fn upsert(&self, budget: &Budget) -> Result<()> {
         self.db.conn.execute(
-            "INSERT INTO budgets (id, month, year, category, amount, spent, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "INSERT INTO budgets (id, month, year, category, amount, spent, is_template, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT(month, year, category) DO UPDATE SET
                  amount = excluded.amount,
                  spent = excluded.spent,
+                 is_template = excluded.is_template,
                  updated_at = excluded.updated_at",
             params![
                 budget.id.to_string(),
@@ -141,6 +258,7 @@ impl<'a> BudgetRepository<'a> {
                 budget.category,
                 budget.amount.to_string(),
                 budget.spent.to_string(),
+                budget.is_template as i32,
                 budget.created_at.to_rfc3339(),
                 budget.updated_at.to_rfc3339(),
             ],
@@ -164,18 +282,18 @@ impl<'a> BudgetRepository<'a> {
         Ok(())
     }
 
-    /// Get budgets for a year.
+    /// Get budgets for a year (overrides only, not templates).
     ///
     /// # Arguments
     /// * `year` - The year
     ///
     /// # Returns
-    /// * `Result<Vec<Budget>>` - All budgets for the year
+    /// * `Result<Vec<Budget>>` - All budget overrides for the year
     pub fn get_by_year(&self, year: i32) -> Result<Vec<Budget>> {
         let mut stmt = self.db.conn.prepare(
-            "SELECT id, month, year, category, amount, spent, created_at, updated_at
+            "SELECT id, month, year, category, amount, spent, is_template, created_at, updated_at
              FROM budgets 
-             WHERE year = ?1
+             WHERE year = ?1 AND is_template = 0
              ORDER BY month, category",
         )?;
 
@@ -230,6 +348,7 @@ impl<'a> BudgetRepository<'a> {
     }
 
     /// Convert a database row to a Budget.
+    /// Expected column order: id, month, year, category, amount, spent, is_template, created_at, updated_at
     fn row_to_budget(row: &Row<'_>) -> Result<Budget> {
         let id_str: String = row.get(0)?;
         let id = Uuid::parse_str(&id_str)
@@ -246,7 +365,9 @@ impl<'a> BudgetRepository<'a> {
         let spent = Decimal::from_str(&spent_str)
             .map_err(|e| crate::error::CashCraftError::Parse(e.to_string()))?;
 
-        let created_at_str: String = row.get(6)?;
+        let is_template: i32 = row.get(6)?;
+
+        let created_at_str: String = row.get(7)?;
         let created_at = DateTime::parse_from_rfc3339(&created_at_str)
             .map(|dt| dt.with_timezone(&Utc))
             .or_else(|_| {
@@ -255,7 +376,7 @@ impl<'a> BudgetRepository<'a> {
             })
             .map_err(|e| crate::error::CashCraftError::Parse(e.to_string()))?;
 
-        let updated_at_str: String = row.get(7)?;
+        let updated_at_str: String = row.get(8)?;
         let updated_at = DateTime::parse_from_rfc3339(&updated_at_str)
             .map(|dt| dt.with_timezone(&Utc))
             .or_else(|_| {
@@ -271,6 +392,7 @@ impl<'a> BudgetRepository<'a> {
             category: row.get(3)?,
             amount,
             spent,
+            is_template: is_template != 0,
             created_at,
             updated_at,
         })
@@ -281,8 +403,8 @@ impl<'a> Repository<Budget> for BudgetRepository<'a> {
     fn create(&self, item: &Budget) -> Result<()> {
         self.db.conn.execute(
             "INSERT INTO budgets 
-             (id, month, year, category, amount, spent, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+             (id, month, year, category, amount, spent, is_template, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 item.id.to_string(),
                 item.month as i32,
@@ -290,6 +412,7 @@ impl<'a> Repository<Budget> for BudgetRepository<'a> {
                 item.category,
                 item.amount.to_string(),
                 item.spent.to_string(),
+                item.is_template as i32,
                 item.created_at.to_rfc3339(),
                 item.updated_at.to_rfc3339(),
             ],
@@ -299,7 +422,7 @@ impl<'a> Repository<Budget> for BudgetRepository<'a> {
 
     fn get_by_id(&self, id: &str) -> Result<Option<Budget>> {
         let mut stmt = self.db.conn.prepare(
-            "SELECT id, month, year, category, amount, spent, created_at, updated_at
+            "SELECT id, month, year, category, amount, spent, is_template, created_at, updated_at
              FROM budgets 
              WHERE id = ?1",
         )?;
@@ -315,9 +438,9 @@ impl<'a> Repository<Budget> for BudgetRepository<'a> {
 
     fn get_all(&self) -> Result<Vec<Budget>> {
         let mut stmt = self.db.conn.prepare(
-            "SELECT id, month, year, category, amount, spent, created_at, updated_at
+            "SELECT id, month, year, category, amount, spent, is_template, created_at, updated_at
              FROM budgets 
-             ORDER BY year DESC, month DESC, category",
+             ORDER BY is_template DESC, year DESC, month DESC, category",
         )?;
 
         let rows = stmt.query_map([], |row| {
@@ -341,7 +464,7 @@ impl<'a> Repository<Budget> for BudgetRepository<'a> {
     fn update(&self, item: &Budget) -> Result<()> {
         self.db.conn.execute(
             "UPDATE budgets 
-             SET month = ?2, year = ?3, category = ?4, amount = ?5, spent = ?6, updated_at = ?7
+             SET month = ?2, year = ?3, category = ?4, amount = ?5, spent = ?6, is_template = ?7, updated_at = ?8
              WHERE id = ?1",
             params![
                 item.id.to_string(),
@@ -350,6 +473,7 @@ impl<'a> Repository<Budget> for BudgetRepository<'a> {
                 item.category,
                 item.amount.to_string(),
                 item.spent.to_string(),
+                item.is_template as i32,
                 Utc::now().to_rfc3339(),
             ],
         )?;

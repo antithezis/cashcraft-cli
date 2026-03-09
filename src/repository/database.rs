@@ -46,9 +46,31 @@ impl Database {
 
     /// Initialize the database schema.
     ///
-    /// Creates all tables and indexes if they don't exist.
+    /// Creates all tables and indexes if they don't exist, then runs migrations.
     fn initialize(&self) -> Result<()> {
         self.conn.execute_batch(SCHEMA)?;
+        self.run_migrations()?;
+        Ok(())
+    }
+
+    /// Run database migrations for schema updates.
+    ///
+    /// Applies any necessary schema changes to existing databases.
+    fn run_migrations(&self) -> Result<()> {
+        // Migration: Add is_template column to budgets table if it doesn't exist
+        let has_is_template: bool = self
+            .conn
+            .prepare("SELECT is_template FROM budgets LIMIT 1")
+            .is_ok();
+
+        if !has_is_template {
+            // Add the column with default value
+            self.conn.execute(
+                "ALTER TABLE budgets ADD COLUMN is_template INTEGER DEFAULT 0",
+                [],
+            )?;
+        }
+
         Ok(())
     }
 
@@ -115,7 +137,9 @@ CREATE TABLE IF NOT EXISTS transactions (
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
--- Budgets
+-- Budgets (with template support)
+-- is_template=1: Template applies to all months (month/year ignored, set to 0)
+-- is_template=0: Override for a specific month/year
 CREATE TABLE IF NOT EXISTS budgets (
     id TEXT PRIMARY KEY,
     month INTEGER NOT NULL,
@@ -123,6 +147,7 @@ CREATE TABLE IF NOT EXISTS budgets (
     category TEXT NOT NULL,
     amount TEXT NOT NULL,
     spent TEXT DEFAULT '0',
+    is_template INTEGER DEFAULT 0,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(month, year, category)

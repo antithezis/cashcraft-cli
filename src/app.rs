@@ -8,7 +8,17 @@
 //! - Status messages
 
 use crate::config::{Keybindings, Settings};
+use crate::ui::history::History;
 use crate::ui::theme::Theme;
+
+/// Pending action awaiting confirmation
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PendingAction {
+    DeleteIncome(String),
+    DeleteExpense(String),
+    DeleteTransaction(String),
+    DeleteBudget(String),
+}
 
 /// Vim-style editing mode
 ///
@@ -218,6 +228,15 @@ pub struct App {
 
     /// Key sequence buffer (for multi-key commands like "gg")
     pub key_buffer: String,
+
+    /// Whether to show the confirmation modal
+    pub show_confirmation: bool,
+
+    /// Pending action to execute on confirmation
+    pub pending_action: Option<PendingAction>,
+
+    /// Undo/Redo history
+    pub history: History,
 }
 
 impl App {
@@ -236,6 +255,9 @@ impl App {
             status_message: None,
             previous_view: None,
             key_buffer: String::new(),
+            show_confirmation: false,
+            pending_action: None,
+            history: History::new(),
         }
     }
 

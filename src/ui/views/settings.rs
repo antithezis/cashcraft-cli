@@ -39,8 +39,18 @@ impl SettingsSection {
         ]
     }
 
-    /// Get display name
-    pub fn name(&self) -> &'static str {
+    /// Get item count
+    pub fn item_count(&self) -> usize {
+        match self {
+            SettingsSection::Appearance => 2,
+            SettingsSection::Format => 3,
+            SettingsSection::Data => 4,
+            SettingsSection::About => 0,
+        }
+    }
+
+    /// Get section name
+    pub fn name(&self) -> &str {
         match self {
             SettingsSection::Appearance => "Appearance",
             SettingsSection::Format => "Format",
@@ -79,13 +89,15 @@ impl SettingsState {
             .map(|t| t.to_string())
             .collect();
 
-        Self {
+        let mut state = Self {
             section: SettingsSection::Appearance,
             table_state: TableState::new(),
             settings: Settings::default(),
             selected_theme: 0,
             theme_names,
-        }
+        };
+        state.table_state.set_total(state.section.item_count());
+        state
     }
 
     /// Load settings
@@ -108,6 +120,8 @@ impl SettingsState {
             SettingsSection::Data => SettingsSection::About,
             SettingsSection::About => SettingsSection::Appearance,
         };
+        self.table_state.set_total(self.section.item_count());
+        self.table_state.select(0);
     }
 
     /// Previous section
@@ -118,6 +132,8 @@ impl SettingsState {
             SettingsSection::Data => SettingsSection::Format,
             SettingsSection::About => SettingsSection::Data,
         };
+        self.table_state.set_total(self.section.item_count());
+        self.table_state.select(0);
     }
 
     /// Select next theme
@@ -137,6 +153,28 @@ impl SettingsState {
                 self.selected_theme - 1
             };
             self.settings.appearance.theme = self.theme_names[self.selected_theme].clone();
+        }
+    }
+
+    /// Handle enter key
+    pub fn enter(&mut self) {
+        if self.section == SettingsSection::Appearance && self.table_state.selected == 1 {
+            self.settings.appearance.animations_enabled =
+                !self.settings.appearance.animations_enabled;
+        }
+    }
+
+    /// Handle right arrow / l key
+    pub fn next_value(&mut self) {
+        if self.section == SettingsSection::Appearance && self.table_state.selected == 0 {
+            self.next_theme();
+        }
+    }
+
+    /// Handle left arrow / h key
+    pub fn prev_value(&mut self) {
+        if self.section == SettingsSection::Appearance && self.table_state.selected == 0 {
+            self.prev_theme();
         }
     }
 
@@ -272,18 +310,28 @@ impl<'a> SettingsView<'a> {
                 break;
             }
 
-            buf.set_string(
-                area.x,
-                y,
-                format!("{}: ", label),
-                Style::default().fg(self.theme.colors.text_primary),
-            );
+            let selected = i == self.state.table_state.selected;
+            let style = if selected {
+                Style::default()
+                    .bg(self.theme.colors.surface)
+                    .fg(self.theme.colors.text_primary)
+            } else {
+                Style::default().fg(self.theme.colors.text_primary)
+            };
+
+            buf.set_string(area.x, y, format!("{}: ", label), style);
 
             buf.set_string(
                 area.x + 20,
                 y,
                 value,
-                Style::default().fg(self.theme.colors.accent),
+                if selected {
+                    Style::default()
+                        .fg(self.theme.colors.accent)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(self.theme.colors.accent)
+                },
             );
         }
     }

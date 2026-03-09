@@ -127,16 +127,84 @@ impl<'a> BudgetService<'a> {
         self.repo.delete(id)
     }
 
-    /// Get all budgets for a specific month.
+    /// Get all budgets for a specific month (overrides only).
+    ///
+    /// Use `get_effective_budgets` to get templates + overrides merged.
     ///
     /// # Arguments
     /// * `year` - The year
     /// * `month` - The month (1-12)
     ///
     /// # Returns
-    /// * `Result<Vec<Budget>>` - Budgets for the specified month
+    /// * `Result<Vec<Budget>>` - Budget overrides for the specified month
     pub fn get_month_budgets(&self, year: i32, month: u32) -> Result<Vec<Budget>> {
         self.repo.get_by_month(year, month)
+    }
+
+    /// Get effective budgets for a month (templates + overrides merged).
+    ///
+    /// For each category:
+    /// - If a month-specific override exists, use it
+    /// - Otherwise, use the template (if any)
+    ///
+    /// # Arguments
+    /// * `year` - The year
+    /// * `month` - The month (1-12)
+    ///
+    /// # Returns
+    /// * `Result<Vec<Budget>>` - Effective budgets for the month
+    pub fn get_effective_budgets(&self, year: i32, month: u32) -> Result<Vec<Budget>> {
+        self.repo.get_effective_budgets(year, month)
+    }
+
+    /// Get all budget templates.
+    ///
+    /// Templates apply to all months by default.
+    ///
+    /// # Returns
+    /// * `Result<Vec<Budget>>` - All budget templates
+    pub fn get_templates(&self) -> Result<Vec<Budget>> {
+        self.repo.get_templates()
+    }
+
+    /// Create a budget template for a category.
+    ///
+    /// Templates apply to all months by default.
+    ///
+    /// # Arguments
+    /// * `category` - The category name
+    /// * `amount` - The budget amount
+    ///
+    /// # Returns
+    /// * `Result<Budget>` - The created template
+    pub fn create_template(&self, category: &str, amount: Decimal) -> Result<Budget> {
+        let template = Budget::new_template(category.to_string(), amount);
+        self.repo.create(&template)?;
+        Ok(template)
+    }
+
+    /// Create an override for a specific month.
+    ///
+    /// Overrides a template's amount for a specific month.
+    ///
+    /// # Arguments
+    /// * `year` - The year
+    /// * `month` - The month (1-12)
+    /// * `category` - The category
+    /// * `amount` - The override amount
+    ///
+    /// # Returns
+    /// * `Result<Budget>` - The created override
+    pub fn create_override(
+        &self,
+        year: i32,
+        month: u32,
+        category: &str,
+        amount: Decimal,
+    ) -> Result<Budget> {
+        let budget = Budget::new(month, year, category.to_string(), amount);
+        self.repo.upsert(&budget)?;
+        Ok(budget)
     }
 
     /// Get or create a budget for a specific month and category.
@@ -162,7 +230,7 @@ impl<'a> BudgetService<'a> {
     /// Calculate budget progress for a specific month.
     ///
     /// Fetches actual spending from transactions and calculates progress
-    /// for each budget category.
+    /// for each budget category. Uses effective budgets (templates + overrides).
     ///
     /// # Arguments
     /// * `year` - The year
@@ -171,7 +239,8 @@ impl<'a> BudgetService<'a> {
     /// # Returns
     /// * `Result<Vec<BudgetProgress>>` - Progress for each budget
     pub fn calculate_budget_progress(&self, year: i32, month: u32) -> Result<Vec<BudgetProgress>> {
-        let budgets = self.get_month_budgets(year, month)?;
+        // Use effective budgets (templates + overrides merged)
+        let budgets = self.get_effective_budgets(year, month)?;
         let transactions = self.transaction_repo.get_by_month(year, month)?;
 
         // Calculate spending by category from transactions

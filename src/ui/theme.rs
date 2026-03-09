@@ -90,6 +90,7 @@ impl Theme {
             "tokyo-night" | "tokyonight" => Some(Self::tokyo_night()),
             "one-dark" | "onedark" => Some(Self::one_dark()),
             "catppuccin-mocha" | "catppuccin" => Some(Self::catppuccin_mocha()),
+            "rose-pine" | "rosepine" => Some(Self::rose_pine_main()),
             "solarized-light" | "solarized" => Some(Self::solarized_light()),
             "github-light" | "github" => Some(Self::github_light()),
             "one-light" | "onelight" => Some(Self::one_light()),
@@ -107,6 +108,7 @@ impl Theme {
             "tokyo-night",
             "one-dark",
             "catppuccin-mocha",
+            "rose-pine",
             "solarized-light",
             "github-light",
             "one-light",
@@ -123,6 +125,7 @@ impl Theme {
             "tokyo-night",
             "one-dark",
             "catppuccin-mocha",
+            "rose-pine",
         ]
     }
 
@@ -136,14 +139,43 @@ impl Theme {
         ]
     }
 
-    /// Default theme (Dracula)
+    /// Default theme (Rosé Pine)
     pub fn default_theme() -> Self {
-        Self::dracula()
+        Self::rose_pine_main()
     }
 
     // =========================================================================
     // DARK THEMES
     // =========================================================================
+
+    /// Rosé Pine Main theme - All natural pine, faux fur and a bit of soho vibes
+    pub fn rose_pine_main() -> Self {
+        Self {
+            name: "Rosé Pine".into(),
+            variant: ThemeVariant::Dark,
+            colors: ThemeColors {
+                background: Color::Rgb(25, 23, 36),      // #191724 Base
+                foreground: Color::Rgb(224, 222, 244),   // #e0def4 Text
+                surface: Color::Rgb(31, 29, 46),         // #1f1d2e Surface
+                surface_variant: Color::Rgb(38, 35, 58), // #26233a Overlay
+                primary: Color::Rgb(196, 167, 231),      // #c4a7e7 Iris
+                secondary: Color::Rgb(49, 116, 143),     // #31748f Pine
+                accent: Color::Rgb(235, 188, 186),       // #ebbcba Rose
+                success: Color::Rgb(156, 207, 216),      // #9ccfd8 Foam
+                warning: Color::Rgb(246, 193, 119),      // #f6c177 Gold
+                error: Color::Rgb(235, 111, 146),        // #eb6f92 Love
+                info: Color::Rgb(156, 207, 216),         // #9ccfd8 Foam
+                text_primary: Color::Rgb(224, 222, 244),
+                text_secondary: Color::Rgb(235, 188, 186), // Rose
+                text_muted: Color::Rgb(110, 106, 134),     // #6e6a86 Muted
+                border: Color::Rgb(38, 35, 58),            // Overlay
+                border_focus: Color::Rgb(196, 167, 231),   // Iris
+                chart_income: Color::Rgb(156, 207, 216),   // Foam
+                chart_expense: Color::Rgb(235, 111, 146),  // Love
+                chart_savings: Color::Rgb(49, 116, 143),   // Pine
+            },
+        }
+    }
 
     /// Dracula theme - A dark theme with vibrant colors
     pub fn dracula() -> Self {
@@ -452,8 +484,8 @@ mod tests {
 
     #[test]
     fn test_available_themes_count() {
-        assert_eq!(Theme::available_themes().len(), 10);
-        assert_eq!(Theme::dark_themes().len(), 6);
+        assert_eq!(Theme::available_themes().len(), 11);
+        assert_eq!(Theme::dark_themes().len(), 7);
         assert_eq!(Theme::light_themes().len(), 4);
     }
 
@@ -511,7 +543,7 @@ mod tests {
     #[test]
     fn test_default_theme() {
         let default = Theme::default();
-        assert_eq!(default.name, "Dracula");
+        assert_eq!(default.name, "Rosé Pine");
         assert_eq!(default.variant, ThemeVariant::Dark);
     }
 

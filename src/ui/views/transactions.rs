@@ -5,7 +5,9 @@
 //! - Month navigation with [ and ]
 //! - Search/filter support
 //! - CRUD operations (a, e, d)
+//! - Category autocomplete
 
+use crate::ui::widgets::{Autocomplete, AutocompleteState, InputState, TextInput};
 use chrono::{Datelike, Local, NaiveDate};
 use ratatui::{
     buffer::Buffer,
@@ -14,12 +16,11 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Widget},
 };
-use crate::ui::widgets::{InputState, TextInput};
 use rust_decimal::Decimal;
 
 use crate::domain::transaction::{Transaction, TransactionType};
 use crate::repository::Database;
-use crate::services::{MonthSummary, TransactionService};
+use crate::services::{CategoryService, MonthSummary, TransactionService};
 use crate::ui::theme::Theme;
 use crate::ui::widgets::TableState;
 
@@ -42,6 +43,7 @@ pub struct TransactionFormState {
     pub amount: InputState,
     pub type_idx: usize,
     pub category: InputState,
+    pub category_autocomplete: AutocompleteState,
     pub error: Option<String>,
     pub edit_id: Option<String>,
 }
@@ -57,6 +59,7 @@ impl Default for TransactionFormState {
             amount: InputState::new(),
             type_idx: 0, // Expense
             category: InputState::new(),
+            category_autocomplete: AutocompleteState::new(),
             error: None,
             edit_id: None,
         }
@@ -123,6 +126,17 @@ impl TransactionsState {
 
         self.table_state.set_total(self.visible_count());
         self.filtered_indices = None;
+
+        // Load category suggestions for autocomplete
+        self.load_category_suggestions(db);
+    }
+
+    /// Load category suggestions for autocomplete
+    pub fn load_category_suggestions(&mut self, db: &Database) {
+        let category_service = CategoryService::new(db);
+        if let Ok(categories) = category_service.get_all_categories() {
+            self.form.category_autocomplete.set_suggestions(categories);
+        }
     }
 
     /// Navigate to next month
@@ -265,36 +279,54 @@ impl<'a> TransactionsView<'a> {
 
     /// Render the table header row
     fn render_table_header(&self, area: Rect, buf: &mut Buffer) {
-        // Column widths: Date(10) | Description(flex) | Amount(12) | Type(8) | Category(12)
-        let date_w = 10;
-        let amount_w = 12;
-        let type_w = 8;
-        let cat_w = 12;
-        let desc_w = (area.width as usize).saturating_sub(date_w + amount_w + type_w + cat_w + 4);
+        let layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(12), // Date
+                Constraint::Fill(2),    // Description
+                Constraint::Length(15), // Amount
+                Constraint::Length(8),  // Type
+                Constraint::Fill(1),    // Category
+            ]);
+
+        let cols = layout.split(area);
 
         let header_style = Style::default()
             .fg(self.theme.colors.text_primary)
             .add_modifier(Modifier::BOLD);
 
-        let mut x = area.x;
-        buf.set_string(x, area.y, "Date", header_style);
-        x += date_w as u16;
-        buf.set_string(x, area.y, "Description", header_style);
-        x += desc_w as u16;
-        buf.set_string(x, area.y, "Amount", header_style);
-        x += amount_w as u16;
-        buf.set_string(x, area.y, "Type", header_style);
-        x += type_w as u16;
-        buf.set_string(x, area.y, "Category", header_style);
+        let headers = ["Date", "Description", "Amount", "Type", "Category"];
+        let alignments = [
+            Alignment::Left,
+            Alignment::Left,
+            Alignment::Right,
+            Alignment::Center,
+            Alignment::Left,
+        ];
+
+        for (i, col) in cols.iter().enumerate() {
+            if i < headers.len() {
+                Paragraph::new(headers[i])
+                    .style(header_style)
+                    .alignment(alignments[i])
+                    .render(*col, buf);
+            }
+        }
     }
 
     /// Render a single transaction row
     fn render_row(&self, area: Rect, buf: &mut Buffer, tx: &Transaction, selected: bool) {
-        let date_w = 10;
-        let amount_w = 12;
-        let type_w = 8;
-        let cat_w = 12;
-        let desc_w = (area.width as usize).saturating_sub(date_w + amount_w + type_w + cat_w + 4);
+        let layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(12), // Date
+                Constraint::Fill(2),    // Description
+                Constraint::Length(15), // Amount
+                Constraint::Length(8),  // Type
+                Constraint::Fill(1),    // Category
+            ]);
+
+        let cols = layout.split(area);
 
         let base_style = if selected {
             Style::default()
@@ -306,26 +338,21 @@ impl<'a> TransactionsView<'a> {
 
         // Fill background if selected
         if selected {
-            for x in area.x..area.x + area.width {
-                buf.set_string(x, area.y, " ", base_style);
-            }
+            buf.set_style(area, base_style);
         }
-
-        let mut x = area.x;
 
         // Date
         let date_str = tx.date.format("%Y-%m-%d").to_string();
-        buf.set_string(x, area.y, &date_str, base_style);
-        x += date_w as u16;
+        Paragraph::new(date_str)
+            .style(base_style)
+            .alignment(Alignment::Left)
+            .render(cols[0], buf);
 
-        // Description (truncate if needed)
-        let desc = if tx.description.len() > desc_w {
-            format!("{}...", &tx.description[..desc_w.saturating_sub(3)])
-        } else {
-            tx.description.clone()
-        };
-        buf.set_string(x, area.y, &desc, base_style);
-        x += desc_w as u16;
+        // Description
+        Paragraph::new(tx.description.as_str())
+            .style(base_style)
+            .alignment(Alignment::Left)
+            .render(cols[1], buf);
 
         // Amount
         let amount_str = self.format_amount(tx.amount, &tx.transaction_type);
@@ -335,8 +362,11 @@ impl<'a> TransactionsView<'a> {
         } else {
             self.type_style(&tx.transaction_type)
         };
-        buf.set_string(x, area.y, &amount_str, amount_style);
-        x += amount_w as u16;
+
+        Paragraph::new(amount_str)
+            .style(amount_style)
+            .alignment(Alignment::Right)
+            .render(cols[2], buf);
 
         // Type
         let type_str = match tx.transaction_type {
@@ -344,16 +374,16 @@ impl<'a> TransactionsView<'a> {
             TransactionType::Expense => "EXP",
             TransactionType::Transfer => "TRF",
         };
-        buf.set_string(x, area.y, type_str, amount_style);
-        x += type_w as u16;
+        Paragraph::new(type_str)
+            .style(amount_style)
+            .alignment(Alignment::Center)
+            .render(cols[3], buf);
 
-        // Category (truncate if needed)
-        let cat = if tx.category.len() > cat_w {
-            format!("{}...", &tx.category[..cat_w.saturating_sub(3)])
-        } else {
-            tx.category.clone()
-        };
-        buf.set_string(x, area.y, &cat, base_style);
+        // Category
+        Paragraph::new(tx.category.as_str())
+            .style(base_style)
+            .alignment(Alignment::Left)
+            .render(cols[4], buf);
     }
 
     /// Render the summary footer
@@ -408,7 +438,11 @@ impl<'a> TransactionsView<'a> {
 
         Clear.render(popup_area, buf);
 
-        let title = if self.state.form.is_edit { " Edit Transaction " } else { " Add Transaction " };
+        let title = if self.state.form.is_edit {
+            " Edit Transaction "
+        } else {
+            " Add Transaction "
+        };
         let block = Block::default()
             .title(title)
             .borders(Borders::ALL)
@@ -420,69 +454,172 @@ impl<'a> TransactionsView<'a> {
         let normal_style = Style::default().fg(self.theme.colors.text_primary);
 
         // Date
-        buf.set_string(inner.x + 2, inner.y + 1, "Date:", if self.state.form.active_field == 0 { active_style } else { normal_style });
+        buf.set_string(
+            inner.x + 2,
+            inner.y + 1,
+            "Date:",
+            if self.state.form.active_field == 0 {
+                active_style
+            } else {
+                normal_style
+            },
+        );
         let date_rect = Rect::new(inner.x + 10, inner.y + 1, inner.width - 12, 1);
-        let date_input = TextInput::new(&self.state.form.date, self.theme).placeholder("YYYY-MM-DD").block(Block::default());
+        let date_input = TextInput::new(&self.state.form.date, self.theme)
+            .placeholder("YYYY-MM-DD")
+            .block(Block::default());
         if self.state.form.active_field == 0 {
             let mut state = self.state.form.date.clone();
             state.focus();
-            TextInput::new(&state, self.theme).placeholder("YYYY-MM-DD").block(Block::default()).render(date_rect, buf);
+            TextInput::new(&state, self.theme)
+                .placeholder("YYYY-MM-DD")
+                .block(Block::default())
+                .render(date_rect, buf);
         } else {
             date_input.render(date_rect, buf);
         }
 
         // Description
-        buf.set_string(inner.x + 2, inner.y + 4, "Desc:", if self.state.form.active_field == 1 { active_style } else { normal_style });
+        buf.set_string(
+            inner.x + 2,
+            inner.y + 4,
+            "Desc:",
+            if self.state.form.active_field == 1 {
+                active_style
+            } else {
+                normal_style
+            },
+        );
         let desc_rect = Rect::new(inner.x + 10, inner.y + 4, inner.width - 12, 1);
-        let desc_input = TextInput::new(&self.state.form.description, self.theme).placeholder("Groceries").block(Block::default());
+        let desc_input = TextInput::new(&self.state.form.description, self.theme)
+            .placeholder("Groceries")
+            .block(Block::default());
         if self.state.form.active_field == 1 {
             let mut state = self.state.form.description.clone();
             state.focus();
-            TextInput::new(&state, self.theme).placeholder("Groceries").block(Block::default()).render(desc_rect, buf);
+            TextInput::new(&state, self.theme)
+                .placeholder("Groceries")
+                .block(Block::default())
+                .render(desc_rect, buf);
         } else {
             desc_input.render(desc_rect, buf);
         }
 
         // Amount
-        buf.set_string(inner.x + 2, inner.y + 7, "Amount:", if self.state.form.active_field == 2 { active_style } else { normal_style });
+        buf.set_string(
+            inner.x + 2,
+            inner.y + 7,
+            "Amount:",
+            if self.state.form.active_field == 2 {
+                active_style
+            } else {
+                normal_style
+            },
+        );
         let amount_rect = Rect::new(inner.x + 10, inner.y + 7, inner.width - 12, 1);
-        let amount_input = TextInput::new(&self.state.form.amount, self.theme).placeholder("50.00").block(Block::default());
+        let amount_input = TextInput::new(&self.state.form.amount, self.theme)
+            .placeholder("50.00")
+            .block(Block::default());
         if self.state.form.active_field == 2 {
             let mut state = self.state.form.amount.clone();
             state.focus();
-            TextInput::new(&state, self.theme).placeholder("50.00").block(Block::default()).render(amount_rect, buf);
+            TextInput::new(&state, self.theme)
+                .placeholder("50.00")
+                .block(Block::default())
+                .render(amount_rect, buf);
         } else {
             amount_input.render(amount_rect, buf);
         }
 
         // Type
-        buf.set_string(inner.x + 2, inner.y + 10, "Type:", if self.state.form.active_field == 3 { active_style } else { normal_style });
+        buf.set_string(
+            inner.x + 2,
+            inner.y + 10,
+            "Type:",
+            if self.state.form.active_field == 3 {
+                active_style
+            } else {
+                normal_style
+            },
+        );
         let type_str = match transaction_types()[self.state.form.type_idx] {
             TransactionType::Income => "Income",
             TransactionType::Expense => "Expense",
             TransactionType::Transfer => "Transfer",
         };
-        buf.set_string(inner.x + 10, inner.y + 10, format!("< {} >", type_str), if self.state.form.active_field == 3 { active_style } else { normal_style });
+        buf.set_string(
+            inner.x + 10,
+            inner.y + 10,
+            format!("< {} >", type_str),
+            if self.state.form.active_field == 3 {
+                active_style
+            } else {
+                normal_style
+            },
+        );
 
         // Category
-        buf.set_string(inner.x + 2, inner.y + 12, "Category:", if self.state.form.active_field == 4 { active_style } else { normal_style });
+        buf.set_string(
+            inner.x + 2,
+            inner.y + 12,
+            "Category:",
+            if self.state.form.active_field == 4 {
+                active_style
+            } else {
+                normal_style
+            },
+        );
         let cat_rect = Rect::new(inner.x + 12, inner.y + 12, inner.width - 14, 1);
-        let cat_input = TextInput::new(&self.state.form.category, self.theme).placeholder("Food").block(Block::default());
+        let cat_input = TextInput::new(&self.state.form.category, self.theme)
+            .placeholder("Food")
+            .block(Block::default());
         if self.state.form.active_field == 4 {
             let mut state = self.state.form.category.clone();
             state.focus();
-            TextInput::new(&state, self.theme).placeholder("Food").block(Block::default()).render(cat_rect, buf);
+            TextInput::new(&state, self.theme)
+                .placeholder("Food")
+                .block(Block::default())
+                .render(cat_rect, buf);
+
+            // Render autocomplete dropdown if visible
+            if self.state.form.category_autocomplete.visible {
+                let dropdown_rect = Rect::new(
+                    cat_rect.x,
+                    cat_rect.y + 1,
+                    cat_rect.width,
+                    6, // 5 items + 1 for bottom border
+                );
+                Autocomplete::new(&self.state.form.category_autocomplete, self.theme)
+                    .max_visible(5)
+                    .render(dropdown_rect, buf);
+            }
         } else {
             cat_input.render(cat_rect, buf);
         }
 
         // Error message
         if let Some(err) = &self.state.form.error {
-            buf.set_string(inner.x + 2, inner.y + 14, err, Style::default().fg(self.theme.colors.error));
+            buf.set_string(
+                inner.x + 2,
+                inner.y + 14,
+                err,
+                Style::default().fg(self.theme.colors.error),
+            );
         }
 
-        // Footer
-        buf.set_string(inner.x + 2, inner.y + 16, "Tab/Shift+Tab: move | Enter: save | Esc: cancel", Style::default().fg(self.theme.colors.text_muted));
+        // Footer - update hint to include autocomplete keys
+        let footer_hint =
+            if self.state.form.active_field == 4 && self.state.form.category_autocomplete.visible {
+                "↑/↓: select | Enter: accept | Tab: next field | Esc: cancel"
+            } else {
+                "Tab/Shift+Tab: move | Enter: save | Esc: cancel"
+            };
+        buf.set_string(
+            inner.x + 2,
+            inner.y + 16,
+            footer_hint,
+            Style::default().fg(self.theme.colors.text_muted),
+        );
     }
 }
 

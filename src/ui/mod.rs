@@ -8,6 +8,7 @@
 //! - Views for each feature area
 
 pub mod animation;
+pub mod history;
 pub mod layout;
 pub mod theme;
 pub mod tui;

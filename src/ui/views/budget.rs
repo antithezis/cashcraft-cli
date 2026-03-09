@@ -2,10 +2,13 @@
 //!
 //! Budget planning and tracking with:
 //! - Budget list with progress bars
-//! - Category budgets
-//! - Month navigation
+//! - Category budgets with template system
+//! - Month navigation with [ and ]
+//! - Visual indicator for templates vs overrides
 //! - Warning indicators
+//! - Category autocomplete
 
+use crate::ui::widgets::{Autocomplete, AutocompleteState, InputState, TextInput};
 use chrono::{Datelike, Local, NaiveDate};
 use ratatui::{
     buffer::Buffer,
@@ -14,12 +17,11 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Widget},
 };
-use crate::ui::widgets::{InputState, TextInput};
 use rust_decimal::Decimal;
 
 use crate::domain::budget::Budget;
 use crate::repository::Database;
-use crate::services::{BudgetProgress, BudgetService, BudgetSummary};
+use crate::services::{BudgetProgress, BudgetService, BudgetSummary, CategoryService};
 use crate::ui::theme::Theme;
 use crate::ui::widgets::{ProgressBar, TableState};
 
@@ -28,8 +30,11 @@ use crate::ui::widgets::{ProgressBar, TableState};
 pub struct BudgetFormState {
     pub is_open: bool,
     pub is_edit: bool,
+    /// If true, creating/editing a template; otherwise, a month override
+    pub is_template_mode: bool,
     pub active_field: usize, // 0: category, 1: amount
     pub category: InputState,
+    pub category_autocomplete: AutocompleteState,
     pub amount: InputState,
     pub error: Option<String>,
     pub edit_id: Option<String>,
@@ -40,8 +45,10 @@ impl Default for BudgetFormState {
         Self {
             is_open: false,
             is_edit: false,
+            is_template_mode: true, // Default to creating templates
             active_field: 0,
             category: InputState::new(),
+            category_autocomplete: AutocompleteState::new(),
             amount: InputState::new(),
             error: None,
             edit_id: None,
@@ -58,7 +65,7 @@ pub struct BudgetState {
     pub month: u32,
     /// Table state for Vim navigation
     pub table_state: TableState,
-    /// Budgets for current month
+    /// Effective budgets for current month (templates + overrides merged)
     pub budgets: Vec<Budget>,
     /// Budget progress for each budget
     pub progress: Vec<BudgetProgress>,
@@ -93,8 +100,9 @@ impl BudgetState {
     pub fn refresh(&mut self, db: &Database) {
         let service = BudgetService::new(db);
 
+        // Use effective budgets (templates + overrides merged)
         self.budgets = service
-            .get_month_budgets(self.year, self.month)
+            .get_effective_budgets(self.year, self.month)
             .unwrap_or_default();
 
         // Calculate progress for all budgets at once
@@ -104,6 +112,17 @@ impl BudgetState {
 
         self.summary = service.get_month_summary(self.year, self.month).ok();
         self.table_state.set_total(self.budgets.len());
+
+        // Load category suggestions for autocomplete
+        self.load_category_suggestions(db);
+    }
+
+    /// Load category suggestions for autocomplete
+    pub fn load_category_suggestions(&mut self, db: &Database) {
+        let category_service = CategoryService::new(db);
+        if let Ok(categories) = category_service.get_all_categories() {
+            self.form.category_autocomplete.set_suggestions(categories);
+        }
     }
 
     /// Navigate to next month
@@ -171,6 +190,21 @@ impl<'a> BudgetView<'a> {
             .map(|d| d.format("%B %Y").to_string())
             .unwrap_or_else(|| format!("{}/{}", self.state.month, self.state.year));
 
+        // Count templates vs overrides
+        let template_count = self.state.budgets.iter().filter(|b| b.is_template).count();
+        let override_count = self.state.budgets.len() - template_count;
+
+        let status = if override_count > 0 {
+            format!(
+                " ({} templates, {} overrides)",
+                template_count, override_count
+            )
+        } else if template_count > 0 {
+            format!(" ({} templates)", template_count)
+        } else {
+            String::new()
+        };
+
         let header = Paragraph::new(Line::from(vec![
             Span::styled("[ ", Style::default().fg(self.theme.colors.text_muted)),
             Span::styled(
@@ -180,8 +214,9 @@ impl<'a> BudgetView<'a> {
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(" ]", Style::default().fg(self.theme.colors.text_muted)),
+            Span::styled(&status, Style::default().fg(self.theme.colors.text_muted)),
             Span::styled(
-                "  ([ prev | ] next | c copy from prev)",
+                "  [ prev | ] next | a add | o override",
                 Style::default().fg(self.theme.colors.text_muted),
             ),
         ]))
@@ -231,11 +266,22 @@ impl<'a> BudgetView<'a> {
             }
         }
 
-        // Category | Spent / Budget | Percentage
-        let cat_w = 15;
+        // [T]/[O] | Category | Spent / Budget | Percentage
+        let type_w = 4; // [T] or [O]
+        let cat_w = 12;
         let amounts_w = 25;
 
         let mut x = area.x;
+
+        // Type indicator
+        let type_indicator = if budget.is_template { "[T]" } else { "[O]" };
+        let type_color = if budget.is_template {
+            self.theme.colors.info
+        } else {
+            self.theme.colors.warning
+        };
+        buf.set_string(x, area.y, type_indicator, Style::default().fg(type_color));
+        x += type_w as u16;
 
         // Category
         let cat = if budget.category.len() > cat_w - 1 {
@@ -300,7 +346,7 @@ impl<'a> BudgetView<'a> {
             }
         }
 
-        // Line 1: Category and amounts
+        // Line 1: Category and amounts (with template indicator)
         let spent = progress.map(|p| p.spent).unwrap_or(Decimal::ZERO);
         let pct = progress.map(|p| p.percentage).unwrap_or_else(|| {
             if budget.amount > Decimal::ZERO {
@@ -319,7 +365,15 @@ impl<'a> BudgetView<'a> {
             self.theme.colors.success
         };
 
+        // Template indicator: [T] for template, [O] for override
+        let type_indicator = if budget.is_template {
+            Span::styled("[T] ", Style::default().fg(self.theme.colors.info))
+        } else {
+            Span::styled("[O] ", Style::default().fg(self.theme.colors.warning))
+        };
+
         let line1 = Line::from(vec![
+            type_indicator,
             Span::styled(&budget.category, base_style.add_modifier(Modifier::BOLD)),
             Span::raw("  "),
             Span::styled(format!("${:.2}", spent), Style::default().fg(pct_color)),
@@ -386,15 +440,25 @@ impl<'a> BudgetView<'a> {
 
     /// Render the add/edit form popup
     fn render_form(&self, area: Rect, buf: &mut Buffer) {
-        let popup_width = 40;
-        let popup_height = 12;
+        let popup_width = 50;
+        let popup_height = 14;
         let x = (area.width.saturating_sub(popup_width)) / 2 + area.x;
         let y = (area.height.saturating_sub(popup_height)) / 2 + area.y;
         let popup_area = Rect::new(x, y, popup_width, popup_height);
 
         Clear.render(popup_area, buf);
 
-        let title = if self.state.form.is_edit { " Edit Budget " } else { " Add Budget " };
+        let title = if self.state.form.is_edit {
+            if self.state.form.is_template_mode {
+                " Edit Template "
+            } else {
+                " Edit Override "
+            }
+        } else if self.state.form.is_template_mode {
+            " Add Template (applies to all months) "
+        } else {
+            " Add Override (this month only) "
+        };
         let block = Block::default()
             .title(title)
             .borders(Borders::ALL)
@@ -405,37 +469,107 @@ impl<'a> BudgetView<'a> {
         let active_style = Style::default().fg(self.theme.colors.accent);
         let normal_style = Style::default().fg(self.theme.colors.text_primary);
 
+        // Type indicator
+        let type_label = if self.state.form.is_template_mode {
+            "Type: [Template] - applies to all months"
+        } else {
+            "Type: [Override] - this month only"
+        };
+        buf.set_string(
+            inner.x + 2,
+            inner.y + 1,
+            type_label,
+            Style::default().fg(self.theme.colors.info),
+        );
+
         // Category
-        buf.set_string(inner.x + 2, inner.y + 1, "Category:", if self.state.form.active_field == 0 { active_style } else { normal_style });
-        let cat_rect = Rect::new(inner.x + 12, inner.y + 1, inner.width - 14, 1);
-        let cat_input = TextInput::new(&self.state.form.category, self.theme).placeholder("Groceries").block(Block::default());
+        buf.set_string(
+            inner.x + 2,
+            inner.y + 3,
+            "Category:",
+            if self.state.form.active_field == 0 {
+                active_style
+            } else {
+                normal_style
+            },
+        );
+        let cat_rect = Rect::new(inner.x + 12, inner.y + 3, inner.width - 14, 1);
+        let cat_input = TextInput::new(&self.state.form.category, self.theme)
+            .placeholder("Groceries")
+            .block(Block::default());
         if self.state.form.active_field == 0 {
             let mut state = self.state.form.category.clone();
             state.focus();
-            TextInput::new(&state, self.theme).placeholder("Groceries").block(Block::default()).render(cat_rect, buf);
+            TextInput::new(&state, self.theme)
+                .placeholder("Groceries")
+                .block(Block::default())
+                .render(cat_rect, buf);
+
+            // Render autocomplete dropdown if visible
+            if self.state.form.category_autocomplete.visible {
+                let dropdown_rect = Rect::new(
+                    cat_rect.x,
+                    cat_rect.y + 1,
+                    cat_rect.width,
+                    6, // 5 items + 1 for bottom border
+                );
+                Autocomplete::new(&self.state.form.category_autocomplete, self.theme)
+                    .max_visible(5)
+                    .render(dropdown_rect, buf);
+            }
         } else {
             cat_input.render(cat_rect, buf);
         }
 
         // Amount
-        buf.set_string(inner.x + 2, inner.y + 4, "Amount:", if self.state.form.active_field == 1 { active_style } else { normal_style });
-        let amount_rect = Rect::new(inner.x + 12, inner.y + 4, inner.width - 14, 1);
-        let amount_input = TextInput::new(&self.state.form.amount, self.theme).placeholder("300.00").block(Block::default());
+        buf.set_string(
+            inner.x + 2,
+            inner.y + 5,
+            "Amount:",
+            if self.state.form.active_field == 1 {
+                active_style
+            } else {
+                normal_style
+            },
+        );
+        let amount_rect = Rect::new(inner.x + 12, inner.y + 5, inner.width - 14, 1);
+        let amount_input = TextInput::new(&self.state.form.amount, self.theme)
+            .placeholder("300.00")
+            .block(Block::default());
         if self.state.form.active_field == 1 {
             let mut state = self.state.form.amount.clone();
             state.focus();
-            TextInput::new(&state, self.theme).placeholder("300.00").block(Block::default()).render(amount_rect, buf);
+            TextInput::new(&state, self.theme)
+                .placeholder("300.00")
+                .block(Block::default())
+                .render(amount_rect, buf);
         } else {
             amount_input.render(amount_rect, buf);
         }
 
         // Error message
         if let Some(err) = &self.state.form.error {
-            buf.set_string(inner.x + 2, inner.y + 6, err, Style::default().fg(self.theme.colors.error));
+            buf.set_string(
+                inner.x + 2,
+                inner.y + 7,
+                err,
+                Style::default().fg(self.theme.colors.error),
+            );
         }
 
-        // Footer
-        buf.set_string(inner.x + 2, inner.y + 8, "Tab/Shift+Tab: move | Enter: save | Esc: cancel", Style::default().fg(self.theme.colors.text_muted));
+        // Footer - update hint to include autocomplete keys
+        let footer_hint =
+            if self.state.form.active_field == 0 && self.state.form.category_autocomplete.visible {
+                "↑/↓: select | Enter: accept | Tab: next field | Esc: cancel"
+            } else {
+                "Tab/Shift+Tab: move | Enter: save | Esc: cancel"
+            };
+        buf.set_string(
+            inner.x + 2,
+            inner.y + 9,
+            footer_hint,
+            Style::default().fg(self.theme.colors.text_muted),
+        );
     }
 }
 

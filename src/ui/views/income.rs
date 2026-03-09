@@ -6,6 +6,7 @@
 //! - Variable name display ($name)
 //! - Frequency and amount display
 
+use crate::ui::widgets::{InputState, TextInput};
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -13,7 +14,6 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Widget},
 };
-use crate::ui::widgets::{InputState, TextInput};
 use rust_decimal::Decimal;
 
 use crate::domain::income::{Frequency, IncomeSource};
@@ -222,17 +222,52 @@ impl<'a> IncomeView<'a> {
             return;
         }
 
+        // Define layout
+        let layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(3),  // Cursor
+                Constraint::Fill(1),    // Variable
+                Constraint::Fill(2),    // Name
+                Constraint::Length(15), // Amount
+                Constraint::Length(12), // Freq
+                Constraint::Length(15), // Monthly
+                Constraint::Length(4),  // Active
+            ]);
+
         // Render header row
         if inner.height > 0 {
+            let header_area = Rect {
+                x: inner.x,
+                y: inner.y,
+                width: inner.width,
+                height: 1,
+            };
+
+            let cols = layout.split(header_area);
             let header_style = Style::default()
                 .fg(self.theme.colors.text_secondary)
                 .add_modifier(Modifier::BOLD);
 
-            let header = format!(
-                " {:12} {:20} {:>10} {:10} {:>12} {:6}",
-                "Variable", "Name", "Amount", "Freq", "Monthly", ""
-            );
-            buf.set_string(inner.x, inner.y, &header, header_style);
+            let headers = ["", "Variable", "Name", "Amount", "Freq", "Monthly", "Act"];
+            let alignments = [
+                Alignment::Left,
+                Alignment::Left,
+                Alignment::Left,
+                Alignment::Right,
+                Alignment::Left,
+                Alignment::Right,
+                Alignment::Center,
+            ];
+
+            for (i, col) in cols.iter().enumerate() {
+                if i < headers.len() {
+                    Paragraph::new(headers[i])
+                        .style(header_style)
+                        .alignment(alignments[i])
+                        .render(*col, buf);
+                }
+            }
         }
 
         // Render income rows
@@ -254,7 +289,15 @@ impl<'a> IncomeView<'a> {
             .take(visible_rows)
         {
             let y = rows_area.y + (i - start) as u16;
+            let row_area = Rect {
+                x: inner.x,
+                y,
+                width: inner.width,
+                height: 1,
+            };
+
             let is_selected = i == self.state.table_state.selected;
+            let cols = layout.split(row_area);
 
             let style = if is_selected {
                 Style::default()
@@ -266,19 +309,51 @@ impl<'a> IncomeView<'a> {
                 Style::default().fg(self.theme.colors.text_muted)
             };
 
-            let active_marker = if income.is_active { "●" } else { "○" };
-            let row = format!(
-                "{}{:12} {:20} {:>10} {:10} {:>12} {:>6}",
-                if is_selected { "▶" } else { " " },
-                format!("${}", truncate(&income.variable_name, 11)),
-                truncate(&income.display_name, 19),
-                format!("${:.2}", income.amount),
-                format_frequency(&income.frequency),
-                format!("${:.2}", income.monthly_amount()),
-                active_marker
-            );
+            // Background for selection
+            if is_selected {
+                buf.set_style(row_area, style);
+            }
 
-            buf.set_string(inner.x, y, &row, style);
+            // 0. Cursor
+            Paragraph::new(if is_selected { " ▶" } else { "" })
+                .style(style)
+                .render(cols[0], buf);
+
+            // 1. Variable
+            Paragraph::new(format!("${}", income.variable_name))
+                .style(style)
+                .alignment(Alignment::Left)
+                .render(cols[1], buf);
+
+            // 2. Name
+            Paragraph::new(income.display_name.as_str())
+                .style(style)
+                .alignment(Alignment::Left)
+                .render(cols[2], buf);
+
+            // 3. Amount
+            Paragraph::new(format!("${:.2}", income.amount))
+                .style(style)
+                .alignment(Alignment::Right)
+                .render(cols[3], buf);
+
+            // 4. Frequency
+            Paragraph::new(format_frequency(&income.frequency))
+                .style(style)
+                .alignment(Alignment::Left)
+                .render(cols[4], buf);
+
+            // 5. Monthly
+            Paragraph::new(format!("${:.2}", income.monthly_amount()))
+                .style(style)
+                .alignment(Alignment::Right)
+                .render(cols[5], buf);
+
+            // 6. Active
+            Paragraph::new(if income.is_active { "●" } else { "○" })
+                .style(style)
+                .alignment(Alignment::Center)
+                .render(cols[6], buf);
         }
     }
 
@@ -314,7 +389,11 @@ impl<'a> IncomeView<'a> {
 
         Clear.render(popup_area, buf);
 
-        let title = if self.state.form.is_edit { " Edit Income " } else { " Add Income " };
+        let title = if self.state.form.is_edit {
+            " Edit Income "
+        } else {
+            " Add Income "
+        };
         let block = Block::default()
             .title(title)
             .borders(Borders::ALL)
@@ -326,53 +405,123 @@ impl<'a> IncomeView<'a> {
         let normal_style = Style::default().fg(self.theme.colors.text_primary);
 
         // Var Name
-        buf.set_string(inner.x + 2, inner.y + 1, "Variable:", if self.state.form.active_field == 0 { active_style } else { normal_style });
+        buf.set_string(
+            inner.x + 2,
+            inner.y + 1,
+            "Variable:",
+            if self.state.form.active_field == 0 {
+                active_style
+            } else {
+                normal_style
+            },
+        );
         let var_rect = Rect::new(inner.x + 12, inner.y + 1, inner.width - 14, 1);
-        let var_input = TextInput::new(&self.state.form.var_name, self.theme).placeholder("salary").block(Block::default());
+        let var_input = TextInput::new(&self.state.form.var_name, self.theme)
+            .placeholder("salary")
+            .block(Block::default());
         if self.state.form.active_field == 0 {
             let mut state = self.state.form.var_name.clone();
             state.focus();
-            TextInput::new(&state, self.theme).placeholder("salary").block(Block::default()).render(var_rect, buf);
+            TextInput::new(&state, self.theme)
+                .placeholder("salary")
+                .block(Block::default())
+                .render(var_rect, buf);
         } else {
             var_input.render(var_rect, buf);
         }
 
         // Display Name
-        buf.set_string(inner.x + 2, inner.y + 4, "Name:", if self.state.form.active_field == 1 { active_style } else { normal_style });
+        buf.set_string(
+            inner.x + 2,
+            inner.y + 4,
+            "Name:",
+            if self.state.form.active_field == 1 {
+                active_style
+            } else {
+                normal_style
+            },
+        );
         let name_rect = Rect::new(inner.x + 12, inner.y + 4, inner.width - 14, 1);
-        let name_input = TextInput::new(&self.state.form.display_name, self.theme).placeholder("Primary Job").block(Block::default());
+        let name_input = TextInput::new(&self.state.form.display_name, self.theme)
+            .placeholder("Primary Job")
+            .block(Block::default());
         if self.state.form.active_field == 1 {
             let mut state = self.state.form.display_name.clone();
             state.focus();
-            TextInput::new(&state, self.theme).placeholder("Primary Job").block(Block::default()).render(name_rect, buf);
+            TextInput::new(&state, self.theme)
+                .placeholder("Primary Job")
+                .block(Block::default())
+                .render(name_rect, buf);
         } else {
             name_input.render(name_rect, buf);
         }
 
         // Amount
-        buf.set_string(inner.x + 2, inner.y + 7, "Amount:", if self.state.form.active_field == 2 { active_style } else { normal_style });
+        buf.set_string(
+            inner.x + 2,
+            inner.y + 7,
+            "Amount:",
+            if self.state.form.active_field == 2 {
+                active_style
+            } else {
+                normal_style
+            },
+        );
         let amount_rect = Rect::new(inner.x + 12, inner.y + 7, inner.width - 14, 1);
-        let amount_input = TextInput::new(&self.state.form.amount, self.theme).placeholder("1000.00").block(Block::default());
+        let amount_input = TextInput::new(&self.state.form.amount, self.theme)
+            .placeholder("1000.00")
+            .block(Block::default());
         if self.state.form.active_field == 2 {
             let mut state = self.state.form.amount.clone();
             state.focus();
-            TextInput::new(&state, self.theme).placeholder("1000.00").block(Block::default()).render(amount_rect, buf);
+            TextInput::new(&state, self.theme)
+                .placeholder("1000.00")
+                .block(Block::default())
+                .render(amount_rect, buf);
         } else {
             amount_input.render(amount_rect, buf);
         }
 
         // Frequency (Selector)
-        buf.set_string(inner.x + 2, inner.y + 10, "Freq:", if self.state.form.active_field == 3 { active_style } else { normal_style });
+        buf.set_string(
+            inner.x + 2,
+            inner.y + 10,
+            "Freq:",
+            if self.state.form.active_field == 3 {
+                active_style
+            } else {
+                normal_style
+            },
+        );
         let freq_str = format_frequency(&frequencies()[self.state.form.frequency_idx]);
-        buf.set_string(inner.x + 12, inner.y + 10, format!("< {} >", freq_str), if self.state.form.active_field == 3 { active_style } else { normal_style });
+        buf.set_string(
+            inner.x + 12,
+            inner.y + 10,
+            format!("< {} >", freq_str),
+            if self.state.form.active_field == 3 {
+                active_style
+            } else {
+                normal_style
+            },
+        );
 
         // Error message
         if let Some(err) = &self.state.form.error {
-            buf.set_string(inner.x + 2, inner.y + 12, err, Style::default().fg(self.theme.colors.error));
+            buf.set_string(
+                inner.x + 2,
+                inner.y + 12,
+                err,
+                Style::default().fg(self.theme.colors.error),
+            );
         }
 
         // Footer
-        buf.set_string(inner.x + 2, inner.y + 14, "Tab/Shift+Tab: move | Enter: save | Esc: cancel", Style::default().fg(self.theme.colors.text_muted));
+        buf.set_string(
+            inner.x + 2,
+            inner.y + 14,
+            "Tab/Shift+Tab: move | Enter: save | Esc: cancel",
+            Style::default().fg(self.theme.colors.text_muted),
+        );
     }
 }
 
@@ -407,14 +556,5 @@ pub fn format_frequency(freq: &Frequency) -> String {
         Frequency::Quarterly => "Quarterly".to_string(),
         Frequency::Yearly => "Yearly".to_string(),
         Frequency::OneTime => "One-Time".to_string(),
-    }
-}
-
-/// Truncate string to max length
-fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max {
-        s.to_string()
-    } else {
-        format!("{}…", &s[..max.saturating_sub(1)])
     }
 }

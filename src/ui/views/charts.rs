@@ -160,10 +160,13 @@ impl<'a> ChartsView<'a> {
                 Style::default().fg(self.theme.colors.text_muted)
             };
 
-            spans.push(Span::styled(
-                format!("[{}] {}", i + 1, chart_type.name()),
-                style,
-            ));
+            let label = if *chart_type == self.state.chart_type {
+                format!("[<] [{}] {} [>]", i + 1, chart_type.name())
+            } else {
+                format!("[{}] {}", i + 1, chart_type.name())
+            };
+
+            spans.push(Span::styled(label, style));
         }
 
         let selector = Paragraph::new(Line::from(spans)).alignment(Alignment::Center);

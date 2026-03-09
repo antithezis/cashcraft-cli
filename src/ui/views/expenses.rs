@@ -6,6 +6,7 @@
 //! - Variable name display ($name)
 //! - Category and type display
 
+use crate::ui::widgets::{InputState, TextInput};
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -13,7 +14,6 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Widget},
 };
-use crate::ui::widgets::{InputState, TextInput};
 use rust_decimal::Decimal;
 
 use crate::domain::expense::{Expense, ExpenseCategory, ExpenseType};
@@ -72,9 +72,9 @@ impl Default for ExpenseFormState {
             var_name: InputState::new(),
             display_name: InputState::new(),
             amount: InputState::new(),
-            type_idx: 0, // Fixed
+            type_idx: 0,      // Fixed
             frequency_idx: 3, // Monthly
-            category_idx: 0, // Housing
+            category_idx: 0,  // Housing
             error: None,
             edit_id: None,
         }
@@ -250,17 +250,52 @@ impl<'a> ExpensesView<'a> {
             return;
         }
 
+        // Define layout
+        let layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(3),  // Cursor
+                Constraint::Fill(1),    // Variable
+                Constraint::Fill(2),    // Name
+                Constraint::Length(12), // Category
+                Constraint::Length(8),  // Type
+                Constraint::Length(12), // Monthly
+                Constraint::Length(4),  // Active
+            ]);
+
         // Render header row
         if inner.height > 0 {
+            let header_area = Rect {
+                x: inner.x,
+                y: inner.y,
+                width: inner.width,
+                height: 1,
+            };
+
+            let cols = layout.split(header_area);
             let header_style = Style::default()
                 .fg(self.theme.colors.text_secondary)
                 .add_modifier(Modifier::BOLD);
 
-            let header = format!(
-                " {:12} {:18} {:10} {:8} {:>10} {:3}",
-                "Variable", "Name", "Category", "Type", "Monthly", ""
-            );
-            buf.set_string(inner.x, inner.y, &header, header_style);
+            let headers = ["", "Variable", "Name", "Category", "Type", "Monthly", "Act"];
+            let alignments = [
+                Alignment::Left,
+                Alignment::Left,
+                Alignment::Left,
+                Alignment::Left,
+                Alignment::Left,
+                Alignment::Right,
+                Alignment::Center,
+            ];
+
+            for (i, col) in cols.iter().enumerate() {
+                if i < headers.len() {
+                    Paragraph::new(headers[i])
+                        .style(header_style)
+                        .alignment(alignments[i])
+                        .render(*col, buf);
+                }
+            }
         }
 
         // Render expense rows
@@ -282,7 +317,15 @@ impl<'a> ExpensesView<'a> {
             .take(visible_rows)
         {
             let y = rows_area.y + (i - start) as u16;
+            let row_area = Rect {
+                x: inner.x,
+                y,
+                width: inner.width,
+                height: 1,
+            };
+
             let is_selected = i == self.state.table_state.selected;
+            let cols = layout.split(row_area);
 
             let style = if is_selected {
                 Style::default()
@@ -294,21 +337,53 @@ impl<'a> ExpensesView<'a> {
                 Style::default().fg(self.theme.colors.text_muted)
             };
 
-            let active_marker = if expense.is_active { "●" } else { "○" };
             let essential_marker = if expense.is_essential { "!" } else { "" };
 
-            let row = format!(
-                "{}{:12} {:18} {:10} {:8} {:>10} {:>3}",
-                if is_selected { "▶" } else { " " },
-                format!("${}", truncate(&expense.variable_name, 11)),
-                truncate(&format!("{}{}", expense.display_name, essential_marker), 17),
-                truncate(&format_category(&expense.category), 9),
-                format_type(&expense.expense_type),
-                format!("${:.2}", expense.monthly_amount()),
-                active_marker
-            );
+            // Background for selection
+            if is_selected {
+                buf.set_style(row_area, style);
+            }
 
-            buf.set_string(inner.x, y, &row, style);
+            // 0. Cursor
+            Paragraph::new(if is_selected { " ▶" } else { "" })
+                .style(style)
+                .render(cols[0], buf);
+
+            // 1. Variable
+            Paragraph::new(format!("${}", expense.variable_name))
+                .style(style)
+                .alignment(Alignment::Left)
+                .render(cols[1], buf);
+
+            // 2. Name
+            Paragraph::new(format!("{}{}", expense.display_name, essential_marker))
+                .style(style)
+                .alignment(Alignment::Left)
+                .render(cols[2], buf);
+
+            // 3. Category
+            Paragraph::new(format_category(&expense.category))
+                .style(style)
+                .alignment(Alignment::Left)
+                .render(cols[3], buf);
+
+            // 4. Type
+            Paragraph::new(format_type(&expense.expense_type))
+                .style(style)
+                .alignment(Alignment::Left)
+                .render(cols[4], buf);
+
+            // 5. Monthly
+            Paragraph::new(format!("${:.2}", expense.monthly_amount()))
+                .style(style)
+                .alignment(Alignment::Right)
+                .render(cols[5], buf);
+
+            // 6. Active
+            Paragraph::new(if expense.is_active { "●" } else { "○" })
+                .style(style)
+                .alignment(Alignment::Center)
+                .render(cols[6], buf);
         }
     }
 
@@ -344,7 +419,11 @@ impl<'a> ExpensesView<'a> {
 
         Clear.render(popup_area, buf);
 
-        let title = if self.state.form.is_edit { " Edit Expense " } else { " Add Expense " };
+        let title = if self.state.form.is_edit {
+            " Edit Expense "
+        } else {
+            " Add Expense "
+        };
         let block = Block::default()
             .title(title)
             .borders(Borders::ALL)
@@ -356,63 +435,171 @@ impl<'a> ExpensesView<'a> {
         let normal_style = Style::default().fg(self.theme.colors.text_primary);
 
         // Var Name
-        buf.set_string(inner.x + 2, inner.y + 1, "Variable:", if self.state.form.active_field == 0 { active_style } else { normal_style });
+        buf.set_string(
+            inner.x + 2,
+            inner.y + 1,
+            "Variable:",
+            if self.state.form.active_field == 0 {
+                active_style
+            } else {
+                normal_style
+            },
+        );
         let var_rect = Rect::new(inner.x + 12, inner.y + 1, inner.width - 14, 1);
-        let var_input = TextInput::new(&self.state.form.var_name, self.theme).placeholder("rent").block(Block::default());
+        let var_input = TextInput::new(&self.state.form.var_name, self.theme)
+            .placeholder("rent")
+            .block(Block::default());
         if self.state.form.active_field == 0 {
             let mut state = self.state.form.var_name.clone();
             state.focus();
-            TextInput::new(&state, self.theme).placeholder("rent").block(Block::default()).render(var_rect, buf);
+            TextInput::new(&state, self.theme)
+                .placeholder("rent")
+                .block(Block::default())
+                .render(var_rect, buf);
         } else {
             var_input.render(var_rect, buf);
         }
 
         // Display Name
-        buf.set_string(inner.x + 2, inner.y + 4, "Name:", if self.state.form.active_field == 1 { active_style } else { normal_style });
+        buf.set_string(
+            inner.x + 2,
+            inner.y + 4,
+            "Name:",
+            if self.state.form.active_field == 1 {
+                active_style
+            } else {
+                normal_style
+            },
+        );
         let name_rect = Rect::new(inner.x + 12, inner.y + 4, inner.width - 14, 1);
-        let name_input = TextInput::new(&self.state.form.display_name, self.theme).placeholder("Apartment Rent").block(Block::default());
+        let name_input = TextInput::new(&self.state.form.display_name, self.theme)
+            .placeholder("Apartment Rent")
+            .block(Block::default());
         if self.state.form.active_field == 1 {
             let mut state = self.state.form.display_name.clone();
             state.focus();
-            TextInput::new(&state, self.theme).placeholder("Apartment Rent").block(Block::default()).render(name_rect, buf);
+            TextInput::new(&state, self.theme)
+                .placeholder("Apartment Rent")
+                .block(Block::default())
+                .render(name_rect, buf);
         } else {
             name_input.render(name_rect, buf);
         }
 
         // Amount
-        buf.set_string(inner.x + 2, inner.y + 7, "Amount:", if self.state.form.active_field == 2 { active_style } else { normal_style });
+        buf.set_string(
+            inner.x + 2,
+            inner.y + 7,
+            "Amount:",
+            if self.state.form.active_field == 2 {
+                active_style
+            } else {
+                normal_style
+            },
+        );
         let amount_rect = Rect::new(inner.x + 12, inner.y + 7, inner.width - 14, 1);
-        let amount_input = TextInput::new(&self.state.form.amount, self.theme).placeholder("1000.00").block(Block::default());
+        let amount_input = TextInput::new(&self.state.form.amount, self.theme)
+            .placeholder("1000.00")
+            .block(Block::default());
         if self.state.form.active_field == 2 {
             let mut state = self.state.form.amount.clone();
             state.focus();
-            TextInput::new(&state, self.theme).placeholder("1000.00").block(Block::default()).render(amount_rect, buf);
+            TextInput::new(&state, self.theme)
+                .placeholder("1000.00")
+                .block(Block::default())
+                .render(amount_rect, buf);
         } else {
             amount_input.render(amount_rect, buf);
         }
 
         // Type
-        buf.set_string(inner.x + 2, inner.y + 10, "Type:", if self.state.form.active_field == 3 { active_style } else { normal_style });
+        buf.set_string(
+            inner.x + 2,
+            inner.y + 10,
+            "Type:",
+            if self.state.form.active_field == 3 {
+                active_style
+            } else {
+                normal_style
+            },
+        );
         let type_str = format_type(&expense_types()[self.state.form.type_idx]);
-        buf.set_string(inner.x + 12, inner.y + 10, format!("< {} >", type_str), if self.state.form.active_field == 3 { active_style } else { normal_style });
+        buf.set_string(
+            inner.x + 12,
+            inner.y + 10,
+            format!("< {} >", type_str),
+            if self.state.form.active_field == 3 {
+                active_style
+            } else {
+                normal_style
+            },
+        );
 
         // Frequency
-        buf.set_string(inner.x + 2, inner.y + 12, "Freq:", if self.state.form.active_field == 4 { active_style } else { normal_style });
-        let freq_str = crate::ui::views::income::format_frequency(&crate::ui::views::income::frequencies()[self.state.form.frequency_idx]);
-        buf.set_string(inner.x + 12, inner.y + 12, format!("< {} >", freq_str), if self.state.form.active_field == 4 { active_style } else { normal_style });
+        buf.set_string(
+            inner.x + 2,
+            inner.y + 12,
+            "Freq:",
+            if self.state.form.active_field == 4 {
+                active_style
+            } else {
+                normal_style
+            },
+        );
+        let freq_str = crate::ui::views::income::format_frequency(
+            &crate::ui::views::income::frequencies()[self.state.form.frequency_idx],
+        );
+        buf.set_string(
+            inner.x + 12,
+            inner.y + 12,
+            format!("< {} >", freq_str),
+            if self.state.form.active_field == 4 {
+                active_style
+            } else {
+                normal_style
+            },
+        );
 
         // Category
-        buf.set_string(inner.x + 2, inner.y + 14, "Category:", if self.state.form.active_field == 5 { active_style } else { normal_style });
+        buf.set_string(
+            inner.x + 2,
+            inner.y + 14,
+            "Category:",
+            if self.state.form.active_field == 5 {
+                active_style
+            } else {
+                normal_style
+            },
+        );
         let cat_str = format_category(&expense_categories()[self.state.form.category_idx]);
-        buf.set_string(inner.x + 12, inner.y + 14, format!("< {} >", cat_str), if self.state.form.active_field == 5 { active_style } else { normal_style });
+        buf.set_string(
+            inner.x + 12,
+            inner.y + 14,
+            format!("< {} >", cat_str),
+            if self.state.form.active_field == 5 {
+                active_style
+            } else {
+                normal_style
+            },
+        );
 
         // Error message
         if let Some(err) = &self.state.form.error {
-            buf.set_string(inner.x + 2, inner.y + 16, err, Style::default().fg(self.theme.colors.error));
+            buf.set_string(
+                inner.x + 2,
+                inner.y + 16,
+                err,
+                Style::default().fg(self.theme.colors.error),
+            );
         }
 
         // Footer
-        buf.set_string(inner.x + 2, inner.y + 18, "Tab/Shift+Tab: move | Enter: save | Esc: cancel", Style::default().fg(self.theme.colors.text_muted));
+        buf.set_string(
+            inner.x + 2,
+            inner.y + 18,
+            "Tab/Shift+Tab: move | Enter: save | Esc: cancel",
+            Style::default().fg(self.theme.colors.text_muted),
+        );
     }
 }
 
