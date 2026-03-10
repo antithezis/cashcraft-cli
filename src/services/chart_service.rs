@@ -56,6 +56,15 @@ pub struct CategoryTrendPoint {
     pub amount: Decimal,
 }
 
+/// Data point for daily spending.
+#[derive(Debug, Clone)]
+pub struct DailySpendingPoint {
+    /// The date
+    pub date: NaiveDate,
+    /// Total amount spent
+    pub amount: Decimal,
+}
+
 /// Service for generating chart data.
 ///
 /// Provides data formatted for various chart visualizations in the TUI.
@@ -339,8 +348,8 @@ impl<'a> ChartService<'a> {
     /// * `month` - The month (1-12)
     ///
     /// # Returns
-    /// * `Result<Vec<(NaiveDate, Decimal)>>` - Daily spending amounts
-    pub fn daily_spending(&self, year: i32, month: u32) -> Result<Vec<(NaiveDate, Decimal)>> {
+    /// * `Result<Vec<DailySpendingPoint>>` - Daily spending amounts
+    pub fn daily_spending(&self, year: i32, month: u32) -> Result<Vec<DailySpendingPoint>> {
         let transactions = self.transaction_repo.get_by_month(year, month)?;
 
         let mut daily: HashMap<NaiveDate, Decimal> = HashMap::new();
@@ -351,8 +360,11 @@ impl<'a> ChartService<'a> {
             }
         }
 
-        let mut result: Vec<(NaiveDate, Decimal)> = daily.into_iter().collect();
-        result.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut result: Vec<DailySpendingPoint> = daily
+            .into_iter()
+            .map(|(date, amount)| DailySpendingPoint { date, amount })
+            .collect();
+        result.sort_by(|a, b| a.date.cmp(&b.date));
 
         Ok(result)
     }
@@ -554,11 +566,11 @@ mod tests {
         assert_eq!(daily.len(), 2);
 
         // Should be sorted by date
-        assert_eq!(daily[0].0, NaiveDate::from_ymd_opt(2026, 3, 5).unwrap());
-        assert_eq!(daily[0].1, dec!(105)); // 100 + 5
+        assert_eq!(daily[0].date, NaiveDate::from_ymd_opt(2026, 3, 5).unwrap());
+        assert_eq!(daily[0].amount, dec!(105)); // 100 + 5
 
-        assert_eq!(daily[1].0, NaiveDate::from_ymd_opt(2026, 3, 10).unwrap());
-        assert_eq!(daily[1].1, dec!(50));
+        assert_eq!(daily[1].date, NaiveDate::from_ymd_opt(2026, 3, 10).unwrap());
+        assert_eq!(daily[1].amount, dec!(50));
     }
 
     #[test]

@@ -25,6 +25,9 @@ use crate::services::{BudgetProgress, BudgetService, BudgetSummary, CategoryServ
 use crate::ui::theme::Theme;
 use crate::ui::widgets::{ProgressBar, TableState};
 
+use crate::config::Settings;
+use crate::utils::currency::format_currency;
+
 /// Form state for adding/editing a budget
 #[derive(Debug, Clone)]
 pub struct BudgetFormState {
@@ -176,12 +179,17 @@ impl BudgetState {
 pub struct BudgetView<'a> {
     state: &'a BudgetState,
     theme: &'a Theme,
+    settings: &'a Settings,
 }
 
 impl<'a> BudgetView<'a> {
     /// Create new budget view
-    pub fn new(state: &'a BudgetState, theme: &'a Theme) -> Self {
-        Self { state, theme }
+    pub fn new(state: &'a BudgetState, theme: &'a Theme, settings: &'a Settings) -> Self {
+        Self {
+            state,
+            theme,
+            settings,
+        }
     }
 
     /// Render the month header
@@ -294,7 +302,11 @@ impl<'a> BudgetView<'a> {
 
         // Spent / Budget
         let spent = progress.map(|p| p.spent).unwrap_or(Decimal::ZERO);
-        let amounts = format!("${:.2} / ${:.2}", spent, budget.amount);
+        let amounts = format!(
+            "{} / {}",
+            format_currency(spent, self.settings),
+            format_currency(budget.amount, self.settings)
+        );
         buf.set_string(x, area.y, &amounts, base_style);
         x += amounts_w as u16;
 
@@ -376,9 +388,12 @@ impl<'a> BudgetView<'a> {
             type_indicator,
             Span::styled(&budget.category, base_style.add_modifier(Modifier::BOLD)),
             Span::raw("  "),
-            Span::styled(format!("${:.2}", spent), Style::default().fg(pct_color)),
-            Span::styled(" / ", Style::default().fg(self.theme.colors.text_muted)),
-            Span::styled(format!("${:.2}", budget.amount), base_style),
+            Span::styled(
+                format_currency(spent, self.settings),
+                Style::default().fg(pct_color),
+            ),
+            Span::raw(" / "),
+            Span::styled(format_currency(budget.amount, self.settings), base_style),
             Span::raw("  "),
             Span::styled(format!("({:.0}%)", pct), Style::default().fg(pct_color)),
         ]);
@@ -415,13 +430,13 @@ impl<'a> BudgetView<'a> {
                 Style::default().fg(self.theme.colors.text_muted),
             ),
             Span::styled(
-                format!("${:.2}", total_budgeted),
+                format_currency(total_budgeted, self.settings),
                 Style::default().fg(self.theme.colors.text_primary),
             ),
             Span::raw(" | "),
             Span::styled("Spent: ", Style::default().fg(self.theme.colors.text_muted)),
             Span::styled(
-                format!("${:.2}", total_spent),
+                format_currency(total_spent, self.settings),
                 Style::default().fg(self.theme.colors.error),
             ),
             Span::raw(" | "),
@@ -430,7 +445,7 @@ impl<'a> BudgetView<'a> {
                 Style::default().fg(self.theme.colors.text_muted),
             ),
             Span::styled(
-                format!("${:.2}", remaining),
+                format_currency(remaining, self.settings),
                 Style::default().fg(remaining_color),
             ),
         ]))

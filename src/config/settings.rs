@@ -31,12 +31,14 @@ pub struct GeneralSettings {
     pub currency: String,
     /// Currency symbol (e.g., "$", "EUR")
     pub currency_symbol: String,
-    /// Position of currency symbol: "before" or "after"
+    /// Currency position of currency symbol: "before" or "after"
     pub currency_position: String,
     /// Decimal separator character
     pub decimal_separator: char,
     /// Thousands separator character
     pub thousands_separator: char,
+    /// Show decimal places
+    pub show_decimals: bool,
     /// Date format string (strftime format)
     pub date_format: String,
     /// First day of week: "monday" or "sunday"
@@ -140,6 +142,7 @@ impl Default for GeneralSettings {
             currency_position: "before".into(),
             decimal_separator: '.',
             thousands_separator: ',',
+            show_decimals: false,
             date_format: "%m/%d/%Y".into(),
             first_day_of_week: "monday".into(),
         }

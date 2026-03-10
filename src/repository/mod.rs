@@ -2,9 +2,13 @@
 //!
 //! SQLite database access and persistence using the repository pattern.
 
+pub mod balance_repo;
 pub mod budget_repo;
 pub mod database;
 pub mod expense_repo;
+
+pub use balance_repo::BalanceRepository;
+pub use budget_repo::BudgetRepository;
 pub mod income_repo;
 pub mod transaction_repo;
 

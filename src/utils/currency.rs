@@ -2,6 +2,7 @@
 //!
 //! Provides currency formatting and parsing with locale support.
 
+use crate::config::Settings;
 use rust_decimal::Decimal;
 
 /// Currency display position
@@ -63,6 +64,24 @@ impl CurrencyFormat {
         Self {
             symbol: "£".to_string(),
             ..Self::default()
+        }
+    }
+
+    /// Create from settings
+    pub fn from_settings(settings: &Settings) -> Self {
+        let position = if settings.general.currency_position == "after" {
+            SymbolPosition::Suffix
+        } else {
+            SymbolPosition::Prefix
+        };
+
+        Self {
+            symbol: settings.general.currency_symbol.clone(),
+            position,
+            decimal_places: if settings.general.show_decimals { 2 } else { 0 },
+            decimal_separator: settings.general.decimal_separator,
+            thousands_separator: settings.general.thousands_separator,
+            show_positive_sign: false,
         }
     }
 
@@ -160,8 +179,8 @@ fn add_thousands_separator(s: &str, separator: char) -> String {
 }
 
 /// Format a decimal as a simple currency string (convenience function)
-pub fn format_currency(value: Decimal) -> String {
-    CurrencyFormat::default().format(value)
+pub fn format_currency(value: Decimal, settings: &Settings) -> String {
+    CurrencyFormat::from_settings(settings).format(value)
 }
 
 /// Format a decimal as compact currency (convenience function)

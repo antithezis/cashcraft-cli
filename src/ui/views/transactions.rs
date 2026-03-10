@@ -24,6 +24,9 @@ use crate::services::{CategoryService, MonthSummary, TransactionService};
 use crate::ui::theme::Theme;
 use crate::ui::widgets::TableState;
 
+use crate::config::Settings;
+use crate::utils::currency::format_currency;
+
 pub fn transaction_types() -> &'static [TransactionType] {
     &[
         TransactionType::Expense,
@@ -226,12 +229,17 @@ impl TransactionsState {
 pub struct TransactionsView<'a> {
     state: &'a TransactionsState,
     theme: &'a Theme,
+    settings: &'a Settings,
 }
 
 impl<'a> TransactionsView<'a> {
     /// Create new transactions view
-    pub fn new(state: &'a TransactionsState, theme: &'a Theme) -> Self {
-        Self { state, theme }
+    pub fn new(state: &'a TransactionsState, theme: &'a Theme, settings: &'a Settings) -> Self {
+        Self {
+            state,
+            theme,
+            settings,
+        }
     }
 
     /// Format transaction type as colored string
@@ -250,7 +258,7 @@ impl<'a> TransactionsView<'a> {
             TransactionType::Expense => "-",
             TransactionType::Transfer => "",
         };
-        format!("{}${:.2}", sign, amount.abs())
+        format!("{}{}", sign, format_currency(amount.abs(), self.settings))
     }
 
     /// Render the header with month navigation
@@ -402,7 +410,11 @@ impl<'a> TransactionsView<'a> {
         let footer = Paragraph::new(Line::from(vec![
             Span::styled("Total: ", Style::default().fg(self.theme.colors.text_muted)),
             Span::styled(
-                format!("{}${:.2}", if net >= Decimal::ZERO { "+" } else { "" }, net),
+                if net >= Decimal::ZERO {
+                    format!("+{}", format_currency(net, self.settings))
+                } else {
+                    format_currency(net, self.settings)
+                },
                 Style::default().fg(net_color),
             ),
             Span::raw(" | "),
@@ -411,7 +423,7 @@ impl<'a> TransactionsView<'a> {
                 Style::default().fg(self.theme.colors.text_muted),
             ),
             Span::styled(
-                format!("${:.2}", total_income),
+                format_currency(total_income, self.settings),
                 Style::default().fg(self.theme.colors.success),
             ),
             Span::raw(" | "),
@@ -420,7 +432,7 @@ impl<'a> TransactionsView<'a> {
                 Style::default().fg(self.theme.colors.text_muted),
             ),
             Span::styled(
-                format!("${:.2}", total_expenses),
+                format_currency(total_expenses, self.settings),
                 Style::default().fg(self.theme.colors.error),
             ),
         ]))

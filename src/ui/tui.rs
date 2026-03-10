@@ -203,33 +203,14 @@ impl TuiRunner {
     fn handle_mouse(&mut self, mouse: MouseEvent) {
         if let MouseEventKind::Down(crossterm::event::MouseButton::Left) = mouse.kind {
             let (col, row) = (mouse.column, mouse.row);
-            // Get terminal size. Using unwrap_or_default just in case.
-            // If it returns Size, we convert to Rect. If Rect, we use it.
-            // But main_layout needs Rect.
             let size = self.terminal.size().unwrap_or_default();
             let area = Rect::new(0, 0, size.width, size.height);
 
-            let (header_area, _content_area, _) = crate::ui::layout::main_layout(area);
+            let (header_area, content_area, _) = crate::ui::layout::main_layout(area);
 
-            // Handle Tab clicks
+            // Handle Tab clicks (Header)
             if row >= header_area.y && row < header_area.y + header_area.height {
                 let views = View::all();
-
-                // Calculate tab positions based on how Tabs widget renders:
-                // The tabs are rendered inside a Block with borders, after the title.
-                // Block has 1 char border on left. Title " CashCraft " is 12 chars.
-                // Tabs start after the title with some padding.
-                // Ratatui's Tabs widget renders: "tab1 | tab2 | tab3"
-                // Each tab width = label.len(), separator = " | " (3 chars)
-                //
-                // Actually, looking at how ratatui renders Tabs:
-                // - Block left border: 1 char
-                // - Title: " CashCraft " (12 chars)
-                // - Then tabs start immediately after
-                //
-                // However the actual tab content starts at x=1 (after left border)
-                // and includes the title which is part of the block decoration.
-                // The tabs themselves start after the left border, no matter the title.
                 let left_border = 1u16;
                 let mut x_offset = header_area.x + left_border;
 
@@ -238,7 +219,6 @@ impl TuiRunner {
                     let width = title.len() as u16;
                     let separator_width = 3u16; // " | "
 
-                    // Check if click is within this tab's area
                     if col >= x_offset && col < x_offset + width {
                         if self.app.view != view {
                             self.app.set_view(view);
@@ -250,6 +230,173 @@ impl TuiRunner {
                     x_offset += width + separator_width;
                 }
             }
+            // Handle Content clicks
+            else if row >= content_area.y && row < content_area.y + content_area.height {
+                match self.app.view {
+                    View::Settings => self.handle_settings_click(content_area, col, row),
+                    View::Charts => self.handle_charts_click(content_area, col, row),
+                    View::Income | View::Expenses | View::Transactions => {
+                        self.handle_standard_list_click(content_area, col, row)
+                    }
+                    View::Budget => self.handle_budget_click(content_area, col, row),
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    /// Handle clicks in Settings view
+    fn handle_settings_click(&mut self, area: Rect, col: u16, row: u16) {
+        use crate::ui::views::SettingsSection;
+
+        // Settings view layout:
+        // Block borders (1px)
+        // Inner split: Tabs (2), Content (Min 3)
+        let inner_area = Rect::new(
+            area.x + 1,
+            area.y + 1,
+            area.width.saturating_sub(2),
+            area.height.saturating_sub(2),
+        );
+
+        if inner_area.height < 5 {
+            return;
+        }
+
+        let tabs_area_y = inner_area.y;
+
+        // If clicked on the tab row
+        if row == tabs_area_y {
+            let sections = SettingsSection::all();
+            let separator_width = 3u16;
+            let total_width: u16 = sections.iter().map(|s| s.name().len() as u16).sum::<u16>()
+                + (sections.len().saturating_sub(1) as u16 * separator_width);
+
+            let mut x = inner_area.x + (inner_area.width.saturating_sub(total_width)) / 2;
+
+            for section in sections {
+                let width = section.name().len() as u16;
+                if col >= x && col < x + width {
+                    if self.view_states.settings.section != *section {
+                        self.view_states.settings.section = *section;
+                        self.view_states
+                            .settings
+                            .table_state
+                            .set_total(section.item_count());
+                        self.view_states.settings.table_state.select(0);
+                    }
+                    return;
+                }
+                x += width + separator_width;
+            }
+        } else {
+            // Content items selection
+            let content_start_y = inner_area.y + 3;
+            if row >= content_start_y {
+                let rel_y = row - content_start_y;
+                let index = match self.view_states.settings.section {
+                    SettingsSection::Appearance => rel_y / 2,
+                    SettingsSection::Format | SettingsSection::Data => rel_y,
+                    SettingsSection::About => return,
+                };
+
+                if index < self.view_states.settings.section.item_count() as u16 {
+                    self.view_states.settings.table_state.select(index as usize);
+                }
+            }
+        }
+    }
+
+    /// Handle clicks in Charts view
+    fn handle_charts_click(&mut self, area: Rect, _col: u16, row: u16) {
+        let inner_area = Rect::new(
+            area.x + 1,
+            area.y + 1,
+            area.width.saturating_sub(2),
+            area.height.saturating_sub(2),
+        );
+
+        if inner_area.height < 5 {
+            return;
+        }
+
+        // Selector row
+        if row == inner_area.y {
+            // Mouse navigation disabled due to merged chart views
+            // Use h/l or arrows to navigate
+        }
+    }
+
+    /// Handle clicks in Standard List views (Income, Expenses, Transactions)
+    fn handle_standard_list_click(&mut self, area: Rect, _col: u16, row: u16) {
+        // Layout: Header(3), List(Min), Help(1)
+        // List Chunk starts at area.y + 3
+        let list_chunk_y = area.y + 3;
+        let list_chunk_height = area.height.saturating_sub(4);
+
+        // Inside List Chunk: Block Borders (1px)
+        // Inner List starts at list_chunk_y + 1
+        // Data rows start at list_chunk_y + 2 (1 for border + 1 for header)
+        let data_start_y = list_chunk_y + 2;
+        let inner_height = list_chunk_height.saturating_sub(2);
+        let data_height = inner_height.saturating_sub(1);
+
+        if row >= data_start_y && row < data_start_y + data_height {
+            let rel_index = (row - data_start_y) as usize;
+
+            match self.app.view {
+                View::Income => {
+                    let offset = self.view_states.income.table_state.offset;
+                    self.view_states
+                        .income
+                        .table_state
+                        .select(offset + rel_index);
+                }
+                View::Expenses => {
+                    let offset = self.view_states.expenses.table_state.offset;
+                    self.view_states
+                        .expenses
+                        .table_state
+                        .select(offset + rel_index);
+                }
+                View::Transactions => {
+                    let offset = self.view_states.transactions.table_state.offset;
+                    self.view_states
+                        .transactions
+                        .table_state
+                        .select(offset + rel_index);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Handle clicks in Budget view
+    fn handle_budget_click(&mut self, area: Rect, _col: u16, row: u16) {
+        // Layout: Border(1), Header(1), List(Min), Footer(1), Border(1)
+        // List area inside block:
+        // Inner Y = area.y + 1
+        // List Start Y = Inner Y + 1 (Header) = area.y + 2
+
+        let list_start_y = area.y + 2;
+        let list_height = area.height.saturating_sub(4); // -2 borders, -1 header, -1 footer
+
+        if row >= list_start_y && row < list_start_y + list_height {
+            let budgets_len = self.view_states.budget.budgets.len();
+            let row_height = if list_height >= (budgets_len * 2) as u16 {
+                2
+            } else {
+                1
+            };
+
+            let rel_y = row - list_start_y;
+            let rel_index = (rel_y / row_height) as usize;
+
+            let offset = self.view_states.budget.table_state.offset;
+            self.view_states
+                .budget
+                .table_state
+                .select(offset + rel_index);
         }
     }
 
@@ -541,6 +688,9 @@ impl TuiRunner {
             // Edit item
             KeyCode::Char('e') => {
                 match self.app.view {
+                    View::Dashboard => {
+                        self.view_states.dashboard.form.is_open = false;
+                    }
                     View::Income => {
                         if let Some(selected) = self.view_states.income.selected() {
                             let mut form = crate::ui::views::income::IncomeFormState::default();
@@ -725,9 +875,19 @@ impl TuiRunner {
                 }
             }
 
-            // Create override for selected budget template (this month only)
+            // 'o' handling (Budget Override or Dashboard Opening Balance)
             KeyCode::Char('o') => {
-                if self.app.view == View::Budget {
+                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                    if self.app.view == View::Dashboard {
+                        self.view_states.dashboard.form.is_open = true;
+                        self.view_states
+                            .dashboard
+                            .form
+                            .amount
+                            .set_value(self.view_states.dashboard.opening_balance.to_string());
+                        self.app.enter_insert_mode();
+                    }
+                } else if self.app.view == View::Budget {
                     if let Some(selected) = self.view_states.budget.selected_budget() {
                         // Create an override form pre-filled with template values
                         let mut form = crate::ui::views::budget::BudgetFormState::default();
@@ -754,11 +914,17 @@ impl TuiRunner {
                 self.app.set_success("Refreshed");
             }
 
-            // View-specific navigation (j/k)
+            // View-specific navigation (j/k/Ctrl+n/Ctrl+p)
             KeyCode::Char('j') | KeyCode::Down => {
                 self.navigate_down();
             }
+            KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.navigate_down();
+            }
             KeyCode::Char('k') | KeyCode::Up => {
+                self.navigate_up();
+            }
+            KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.navigate_up();
             }
 
@@ -774,6 +940,17 @@ impl TuiRunner {
 
             // Enter key
             KeyCode::Enter => {
+                if self.app.view == View::Settings {
+                    self.view_states.settings.enter();
+                    self.app.settings.appearance.animations_enabled = self
+                        .view_states
+                        .settings
+                        .settings
+                        .appearance
+                        .animations_enabled;
+                }
+            }
+            KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 if self.app.view == View::Settings {
                     self.view_states.settings.enter();
                     self.app.settings.appearance.animations_enabled = self
@@ -819,6 +996,34 @@ impl TuiRunner {
                 }
             }
 
+            // Space to toggle chart mode or active state
+            KeyCode::Char(' ') => match self.app.view {
+                View::Charts => {
+                    self.view_states.charts.toggle_view_mode();
+                }
+                View::Income => {
+                    if let Some(selected) = self.view_states.income.selected() {
+                        let mut updated = selected.clone();
+                        updated.is_active = !updated.is_active;
+                        let service = crate::services::IncomeService::new(&self.db);
+                        if let Ok(_) = service.update(&updated) {
+                            self.view_states.refresh_current(View::Income, &self.db);
+                        }
+                    }
+                }
+                View::Expenses => {
+                    if let Some(selected) = self.view_states.expenses.selected() {
+                        let mut updated = selected.clone();
+                        updated.is_active = !updated.is_active;
+                        let service = crate::services::ExpenseService::new(&self.db);
+                        if let Ok(_) = service.update(&updated) {
+                            self.view_states.refresh_current(View::Expenses, &self.db);
+                        }
+                    }
+                }
+                _ => {}
+            },
+
             // Help
             KeyCode::Char('?') => {
                 self.app
@@ -836,7 +1041,61 @@ impl TuiRunner {
     }
 
     /// Handle keys in insert mode
-    fn handle_insert_mode(&mut self, key: KeyEvent) {
+    fn handle_insert_mode(&mut self, mut key: KeyEvent) {
+        // Handle global navigation/action shortcuts
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            match key.code {
+                KeyCode::Char('n') => {
+                    // Ctrl+n -> Down (if autocomplete) or Tab (next field)
+                    let use_down = match self.app.view {
+                        View::Transactions => {
+                            self.view_states
+                                .transactions
+                                .form
+                                .category_autocomplete
+                                .visible
+                        }
+                        View::Budget => self.view_states.budget.form.category_autocomplete.visible,
+                        _ => false,
+                    };
+
+                    if use_down {
+                        key.code = KeyCode::Down;
+                    } else {
+                        key.code = KeyCode::Tab;
+                    }
+                    key.modifiers.remove(KeyModifiers::CONTROL);
+                }
+                KeyCode::Char('p') => {
+                    // Ctrl+p -> Up (if autocomplete) or Shift+Tab (prev field)
+                    let use_up = match self.app.view {
+                        View::Transactions => {
+                            self.view_states
+                                .transactions
+                                .form
+                                .category_autocomplete
+                                .visible
+                        }
+                        View::Budget => self.view_states.budget.form.category_autocomplete.visible,
+                        _ => false,
+                    };
+
+                    if use_up {
+                        key.code = KeyCode::Up;
+                    } else {
+                        key.code = KeyCode::BackTab;
+                    }
+                    key.modifiers.remove(KeyModifiers::CONTROL);
+                }
+                KeyCode::Char('y') => {
+                    // Ctrl+y -> Enter (confirm/submit)
+                    key.code = KeyCode::Enter;
+                    key.modifiers.remove(KeyModifiers::CONTROL);
+                }
+                _ => {}
+            }
+        }
+
         if key.code == KeyCode::Esc {
             self.app.enter_normal_mode();
             match self.app.view {
@@ -859,6 +1118,67 @@ impl TuiRunner {
 
         // Route insert event to active view's input state
         match self.app.view {
+            View::Dashboard => {
+                if !self.view_states.dashboard.form.is_open {
+                    self.app.enter_normal_mode();
+                    return;
+                }
+                match key.code {
+                    KeyCode::Enter => {
+                        use rust_decimal::Decimal;
+                        let amount = self
+                            .view_states
+                            .dashboard
+                            .form
+                            .amount
+                            .value()
+                            .parse::<Decimal>()
+                            .unwrap_or(Decimal::ZERO);
+
+                        let year = self.view_states.dashboard.year;
+                        let month = self.view_states.dashboard.month;
+
+                        let balance_repo = crate::repository::BalanceRepository::new(&self.db);
+                        let tx_repo = crate::repository::TransactionRepository::new(&self.db);
+                        let service = crate::services::BalanceService::new(&balance_repo, &tx_repo);
+
+                        match service.set_opening_balance(year, month, amount) {
+                            Ok(_) => {
+                                self.view_states.refresh_current(View::Dashboard, &self.db);
+                                self.app.enter_normal_mode();
+                                self.view_states.dashboard.form.is_open = false;
+                                self.app.set_success("Opening balance updated");
+                            }
+                            Err(e) => {
+                                self.view_states.dashboard.form.error =
+                                    Some(format!("Error: {}", e));
+                            }
+                        }
+                    }
+                    KeyCode::Backspace => {
+                        self.view_states.dashboard.form.amount.delete();
+                    }
+                    KeyCode::Delete => {
+                        self.view_states.dashboard.form.amount.delete_forward();
+                    }
+                    KeyCode::Left => {
+                        self.view_states.dashboard.form.amount.move_left();
+                    }
+                    KeyCode::Right => {
+                        self.view_states.dashboard.form.amount.move_right();
+                    }
+                    KeyCode::Home => {
+                        self.view_states.dashboard.form.amount.move_start();
+                    }
+                    KeyCode::End => {
+                        self.view_states.dashboard.form.amount.move_end();
+                    }
+                    KeyCode::Char(c) => {
+                        self.view_states.dashboard.form.amount.insert(c);
+                    }
+                    _ => {}
+                }
+            }
             View::Income => {
                 if !self.view_states.income.form.is_open {
                     self.app.enter_normal_mode();
@@ -1213,8 +1533,8 @@ impl TuiRunner {
                             .unwrap_or(Decimal::ZERO);
 
                         let date_str = self.view_states.transactions.form.date.value();
-                        let date = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
-                            .unwrap_or_else(|_| chrono::Local::now().date_naive());
+                        let date = crate::utils::date::parse_smart_date(date_str)
+                            .unwrap_or_else(|| chrono::Local::now().date_naive());
 
                         let service = crate::services::TransactionService::new(&self.db);
                         let result = if self.view_states.transactions.form.is_edit {
@@ -1809,26 +2129,27 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
 /// Draw the current view content
 fn draw_view(frame: &mut Frame, app: &App, view_states: &ViewStates, area: Rect) {
     let theme = &app.theme;
+    let settings = &app.settings;
 
     match app.view {
         View::Dashboard => {
-            let dashboard = Dashboard::new(&view_states.dashboard, theme);
+            let dashboard = Dashboard::new(&view_states.dashboard, theme, settings);
             frame.render_widget(dashboard, area);
         }
         View::Income => {
-            let income = IncomeView::new(&view_states.income, theme);
+            let income = IncomeView::new(&view_states.income, theme, settings);
             frame.render_widget(income, area);
         }
         View::Expenses => {
-            let expenses = ExpensesView::new(&view_states.expenses, theme);
+            let expenses = ExpensesView::new(&view_states.expenses, theme, settings);
             frame.render_widget(expenses, area);
         }
         View::Transactions => {
-            let transactions = TransactionsView::new(&view_states.transactions, theme);
+            let transactions = TransactionsView::new(&view_states.transactions, theme, settings);
             frame.render_widget(transactions, area);
         }
         View::Budget => {
-            let budget = BudgetView::new(&view_states.budget, theme);
+            let budget = BudgetView::new(&view_states.budget, theme, settings);
             frame.render_widget(budget, area);
         }
         View::Charts => {

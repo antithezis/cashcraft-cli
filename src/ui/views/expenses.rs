@@ -22,6 +22,9 @@ use crate::services::ExpenseService;
 use crate::ui::theme::Theme;
 use crate::ui::widgets::TableState;
 
+use crate::config::Settings;
+use crate::utils::currency::format_currency;
+
 pub fn expense_types() -> &'static [ExpenseType] {
     &[
         ExpenseType::Fixed,
@@ -151,11 +154,17 @@ impl ExpensesState {
 pub struct ExpensesView<'a> {
     state: &'a ExpensesState,
     theme: &'a Theme,
+    settings: &'a Settings,
 }
 
 impl<'a> ExpensesView<'a> {
-    pub fn new(state: &'a ExpensesState, theme: &'a Theme) -> Self {
-        Self { state, theme }
+    /// Create a new expenses view
+    pub fn new(state: &'a ExpensesState, theme: &'a Theme, settings: &'a Settings) -> Self {
+        Self {
+            state,
+            theme,
+            settings,
+        }
     }
 
     /// Render the header summary
@@ -182,10 +191,25 @@ impl<'a> ExpensesView<'a> {
         let total = Paragraph::new(Line::from(vec![
             Span::styled("Total: ", Style::default().fg(self.theme.colors.text_muted)),
             Span::styled(
-                format!("${:.2}", self.state.total_monthly),
+                format_currency(self.state.total_monthly, self.settings),
                 Style::default()
                     .fg(self.theme.colors.error)
                     .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" | "),
+            Span::styled("Fixed: ", Style::default().fg(self.theme.colors.text_muted)),
+            Span::styled(
+                format_currency(self.state.total_fixed, self.settings),
+                Style::default().fg(self.theme.colors.warning),
+            ),
+            Span::raw(" | "),
+            Span::styled(
+                "Variable: ",
+                Style::default().fg(self.theme.colors.text_muted),
+            ),
+            Span::styled(
+                format_currency(self.state.total_variable, self.settings),
+                Style::default().fg(self.theme.colors.info),
             ),
         ]))
         .alignment(Alignment::Center);
@@ -195,7 +219,7 @@ impl<'a> ExpensesView<'a> {
         let fixed = Paragraph::new(Line::from(vec![
             Span::styled("Fixed: ", Style::default().fg(self.theme.colors.text_muted)),
             Span::styled(
-                format!("${:.2}", self.state.total_fixed),
+                format_currency(self.state.total_fixed, self.settings),
                 Style::default().fg(self.theme.colors.warning),
             ),
         ]))
@@ -209,7 +233,7 @@ impl<'a> ExpensesView<'a> {
                 Style::default().fg(self.theme.colors.text_muted),
             ),
             Span::styled(
-                format!("${:.2}", self.state.total_variable),
+                format_currency(self.state.total_variable, self.settings),
                 Style::default().fg(self.theme.colors.info),
             ),
         ]))
@@ -374,7 +398,7 @@ impl<'a> ExpensesView<'a> {
                 .render(cols[4], buf);
 
             // 5. Monthly
-            Paragraph::new(format!("${:.2}", expense.monthly_amount()))
+            Paragraph::new(format_currency(expense.monthly_amount(), self.settings))
                 .style(style)
                 .alignment(Alignment::Right)
                 .render(cols[5], buf);

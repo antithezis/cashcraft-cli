@@ -43,7 +43,7 @@ impl SettingsSection {
     pub fn item_count(&self) -> usize {
         match self {
             SettingsSection::Appearance => 2,
-            SettingsSection::Format => 3,
+            SettingsSection::Format => 4,
             SettingsSection::Data => 4,
             SettingsSection::About => 0,
         }
@@ -156,11 +156,31 @@ impl SettingsState {
         }
     }
 
+    /// Cycle separator styles
+    fn cycle_separators(&mut self) {
+        let (dec, thou) = (
+            self.settings.general.decimal_separator,
+            self.settings.general.thousands_separator,
+        );
+
+        let (new_dec, new_thou) = match (dec, thou) {
+            ('.', ',') => (',', '.'), // US -> EU
+            (',', '.') => ('.', ' '), // EU -> SI
+            ('.', ' ') => ('.', ','), // SI -> US
+            _ => ('.', ','),          // Default to US
+        };
+
+        self.settings.general.decimal_separator = new_dec;
+        self.settings.general.thousands_separator = new_thou;
+    }
+
     /// Handle enter key
     pub fn enter(&mut self) {
         if self.section == SettingsSection::Appearance && self.table_state.selected == 1 {
             self.settings.appearance.animations_enabled =
                 !self.settings.appearance.animations_enabled;
+        } else if self.section == SettingsSection::Format && self.table_state.selected == 2 {
+            self.settings.general.show_decimals = !self.settings.general.show_decimals;
         }
     }
 
@@ -168,6 +188,8 @@ impl SettingsState {
     pub fn next_value(&mut self) {
         if self.section == SettingsSection::Appearance && self.table_state.selected == 0 {
             self.next_theme();
+        } else if self.section == SettingsSection::Format && self.table_state.selected == 3 {
+            self.cycle_separators();
         }
     }
 
@@ -175,6 +197,10 @@ impl SettingsState {
     pub fn prev_value(&mut self) {
         if self.section == SettingsSection::Appearance && self.table_state.selected == 0 {
             self.prev_theme();
+        } else if self.section == SettingsSection::Format && self.table_state.selected == 3 {
+            // Cycle twice to go back
+            self.cycle_separators();
+            self.cycle_separators();
         }
     }
 
@@ -289,23 +315,42 @@ impl<'a> SettingsView<'a> {
 
     /// Render format section
     fn render_format(&self, area: Rect, buf: &mut Buffer) {
+        let separators = match (
+            self.state.settings.general.decimal_separator,
+            self.state.settings.general.thousands_separator,
+        ) {
+            ('.', ',') => "1,234.56 (US)",
+            (',', '.') => "1.234,56 (EU)",
+            ('.', ' ') => "1 234.56 (SI)",
+            _ => "Custom",
+        };
+
         let settings = [
             (
                 "Currency Symbol",
                 self.state.settings.general.currency_symbol.clone(),
+                "",
             ),
             (
                 "Date Format",
                 self.state.settings.general.date_format.clone(),
+                "",
             ),
             (
-                "Decimal Places",
-                self.state.settings.playground.decimal_places.to_string(),
+                "Show Decimals",
+                if self.state.settings.general.show_decimals {
+                    "Yes"
+                } else {
+                    "No"
+                }
+                .to_string(),
+                "Enter to toggle",
             ),
+            ("Separators", separators.to_string(), "h/l to cycle"),
         ];
 
-        for (i, (label, value)) in settings.iter().enumerate() {
-            let y = area.y + i as u16;
+        for (i, (label, value, hint)) in settings.iter().enumerate() {
+            let y = area.y + i as u16 * 2;
             if y >= area.y + area.height {
                 break;
             }
@@ -319,8 +364,10 @@ impl<'a> SettingsView<'a> {
                 Style::default().fg(self.theme.colors.text_primary)
             };
 
-            buf.set_string(area.x, y, format!("{}: ", label), style);
+            // Label
+            buf.set_string(area.x, y, format!("{}:", label), style);
 
+            // Value
             buf.set_string(
                 area.x + 20,
                 y,
@@ -333,6 +380,16 @@ impl<'a> SettingsView<'a> {
                     Style::default().fg(self.theme.colors.accent)
                 },
             );
+
+            // Hint
+            if selected && !hint.is_empty() {
+                buf.set_string(
+                    area.x,
+                    y + 1,
+                    format!("  ({})", hint),
+                    Style::default().fg(self.theme.colors.text_muted),
+                );
+            }
         }
     }
 

@@ -177,8 +177,18 @@ CREATE INDEX IF NOT EXISTS idx_expense_active ON expenses(is_active);
 CREATE INDEX IF NOT EXISTS idx_expense_category ON expenses(category);
 CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
 CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions(category);
-CREATE INDEX IF NOT EXISTS idx_transactions_type ON transactions(transaction_type);
-CREATE INDEX IF NOT EXISTS idx_budgets_month_year ON budgets(month, year);
+    CREATE INDEX IF NOT EXISTS idx_transactions_type ON transactions(transaction_type);
+    CREATE INDEX IF NOT EXISTS idx_budgets_month_year ON budgets(month, year);
+
+    -- Monthly Balances
+    CREATE TABLE IF NOT EXISTS monthly_balances (
+        year INTEGER NOT NULL,
+        month INTEGER NOT NULL,
+        amount TEXT NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (year, month)
+    );
 "#;
 
 #[cfg(test)]

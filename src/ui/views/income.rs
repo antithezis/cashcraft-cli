@@ -22,6 +22,9 @@ use crate::services::IncomeService;
 use crate::ui::theme::Theme;
 use crate::ui::widgets::TableState;
 
+use crate::config::Settings;
+use crate::utils::currency::format_currency;
+
 pub fn frequencies() -> &'static [Frequency] {
     &[
         Frequency::Daily,
@@ -126,11 +129,17 @@ impl IncomeState {
 pub struct IncomeView<'a> {
     state: &'a IncomeState,
     theme: &'a Theme,
+    settings: &'a Settings,
 }
 
 impl<'a> IncomeView<'a> {
-    pub fn new(state: &'a IncomeState, theme: &'a Theme) -> Self {
-        Self { state, theme }
+    /// Create a new income view
+    pub fn new(state: &'a IncomeState, theme: &'a Theme, settings: &'a Settings) -> Self {
+        Self {
+            state,
+            theme,
+            settings,
+        }
     }
 
     /// Render the header summary
@@ -159,7 +168,7 @@ impl<'a> IncomeView<'a> {
                 Style::default().fg(self.theme.colors.text_muted),
             ),
             Span::styled(
-                format!("${:.2}", self.state.total_monthly),
+                format_currency(self.state.total_monthly, self.settings),
                 Style::default()
                     .fg(self.theme.colors.success)
                     .add_modifier(Modifier::BOLD),
@@ -196,8 +205,8 @@ impl<'a> IncomeView<'a> {
                 Style::default().fg(self.theme.colors.text_muted),
             ),
             Span::styled(
-                format!("${:.2}", yearly),
-                Style::default().fg(self.theme.colors.text_primary),
+                format_currency(yearly, self.settings),
+                Style::default().fg(self.theme.colors.accent),
             ),
         ]))
         .alignment(Alignment::Center);
@@ -254,7 +263,7 @@ impl<'a> IncomeView<'a> {
                 Alignment::Left,
                 Alignment::Left,
                 Alignment::Left,
-                Alignment::Right,
+                Alignment::Left,
                 Alignment::Left,
                 Alignment::Right,
                 Alignment::Center,
@@ -332,10 +341,10 @@ impl<'a> IncomeView<'a> {
                 .render(cols[2], buf);
 
             // 3. Amount
-            Paragraph::new(format!("${:.2}", income.amount))
+            Paragraph::new(format_currency(income.amount, self.settings))
                 .style(style)
                 .alignment(Alignment::Right)
-                .render(cols[3], buf);
+                .render(cols[2], buf);
 
             // 4. Frequency
             Paragraph::new(format_frequency(&income.frequency))
@@ -344,7 +353,7 @@ impl<'a> IncomeView<'a> {
                 .render(cols[4], buf);
 
             // 5. Monthly
-            Paragraph::new(format!("${:.2}", income.monthly_amount()))
+            Paragraph::new(format_currency(income.monthly_amount(), self.settings))
                 .style(style)
                 .alignment(Alignment::Right)
                 .render(cols[5], buf);
